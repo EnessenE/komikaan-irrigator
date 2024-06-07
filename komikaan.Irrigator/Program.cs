@@ -1,9 +1,4 @@
 using System.Reflection;
-using komikaan.Irrigator.Contexts;
-using komikaan.Irrigator.Factories;
-using komikaan.Irrigator.Helpers;
-using komikaan.Irrigator.Interfaces;
-using komikaan.Irrigator.Managers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Serilog;
@@ -40,9 +35,6 @@ namespace komikaan.Irrigator
 
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
-            builder.Services.AddHostedService<HarvestingManager>();
-            builder.Services.AddSingleton<GardenerContext>();
-            builder.Services.AddSingleton<IDataContext, PostgresContext>();
             builder.Services.AddDbContext<GTFSContext>(options =>
             {
                 options.UseNpgsql(builder.Configuration.GetConnectionString("HarvestingTarget"), o => o.UseNetTopologySuite());

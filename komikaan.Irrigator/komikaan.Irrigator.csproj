@@ -34,8 +34,4 @@
     <ProjectReference Include="..\GTFS\GTFS.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Migrations\" />
-  </ItemGroup>
-
 </Project>
