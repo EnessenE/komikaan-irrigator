@@ -31,7 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\GTFS\GTFS.csproj" />
+    <ProjectReference Include="..\..\gtfs-realtime-bindings\dotnet\GtfsRealtimeBindings\GtfsRealtimeBindings.csproj" />
   </ItemGroup>
 
 </Project>
