@@ -20,8 +20,7 @@ namespace komikaan.Irrigator.Services
             FeedMessage feed = Serializer.Deserialize<FeedMessage>(req.GetResponse().GetResponseStream());
             foreach (FeedEntity entity in feed.Entities)
             {
-                _logger.LogInformation("ID: {id}, {alert}, {effect}, {veh}", entity.Id, entity.Alert?.cause, entity.Alert?.effect, entity.Vehicle?.CurrentStatus);
-                _logger.LogInformation("Trip: {id}, delay: {delay}, {stop}", entity.TripUpdate?.Trip.TripId, entity.TripUpdate?.Delay, entity.TripUpdate?.StopTimeUpdates.FirstOrDefault()?.StopSequence);
+                _logger.LogInformation("{id2} Trip: {id}, delay: {delay}, {stop}", entity.Id, entity.TripUpdate?.Trip.TripId, entity.TripUpdate?.Delay, entity.TripUpdate?.StopTimeUpdates.FirstOrDefault()?.StopSequence);
             }
             return Task.CompletedTask;
         }
