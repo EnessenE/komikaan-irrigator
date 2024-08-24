@@ -23,24 +23,30 @@ namespace komikaan.Irrigator.Services
         public async Task StartAsync(CancellationToken cancellationToken)
         {
             //TODO: Figure out scaling how to factor in supplierconfigurations for many feeds
-            //TODO: Take actually scale this
+            //TODO: Actually scale this in all directions
 
-
-            WebRequest req = HttpWebRequest.Create("https://gtfs.ovapi.nl/nl/alerts.pb");
-            _logger.LogInformation("Downloaded pb.");
-            FeedMessage feed = Serializer.Deserialize<FeedMessage>(req.GetResponse().GetResponseStream());
-            var count = feed.Entities.Where(entity => entity.Alert != null).Count();
-            _logger.LogInformation("Alert: {cnt}", count);
-            var stop = Stopwatch.StartNew();
-            foreach (FeedEntity entity in feed.Entities)
+            var response = await _httpClient.GetAsync("https://gtfs.ovapi.nl/nl/alerts.pb");
+            if (response.IsSuccessStatusCode)
             {
-
-                var alert = entity.Alert;
-
-                if (alert != null)
+                _logger.LogInformation("Downloaded pb.");
+                FeedMessage feed = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
+                _logger.LogInformation("Parsed pb.");
+                var count = feed.Entities.Where(entity => entity.Alert != null).Count();
+                _logger.LogInformation("Alert: {cnt}", count);
+                var stop = Stopwatch.StartNew();
+                foreach (FeedEntity entity in feed.Entities)
                 {
-                    await ProcessMessageAsync(alert);
+                    var alert = entity.Alert;
+
+                    if (alert != null)
+                    {
+                        await ProcessMessageAsync(alert);
+                    }
                 }
+            }
+            else
+            {
+                _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
             }
         }
 
