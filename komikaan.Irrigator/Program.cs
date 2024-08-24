@@ -1,7 +1,5 @@
 using System.Reflection;
 using komikaan.Irrigator.Services;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Serilog;
 
 namespace komikaan.Irrigator
@@ -33,8 +31,6 @@ namespace komikaan.Irrigator
 
 
             AddSuppliers(builder.Services);
-
-
 
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 

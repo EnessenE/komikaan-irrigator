@@ -7,6 +7,12 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "komikaan.Irrigator", "komik
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GtfsRealtimeBindings", "..\gtfs-realtime-bindings\dotnet\GtfsRealtimeBindings\GtfsRealtimeBindings.csproj", "{D9096B4F-40A3-4F4A-B47D-D9E39ACFCEC6}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Items", "Items", "{32145B3B-AB27-4628-9F93-808A363DAB4F}"
+	ProjectSection(SolutionItems) = preProject
+		CHANGELOG.md = CHANGELOG.md
+		README.md = README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
