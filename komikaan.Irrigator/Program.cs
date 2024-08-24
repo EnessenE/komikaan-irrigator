@@ -1,6 +1,5 @@
 using System.Reflection;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
+using komikaan.Irrigator.Services;
 using Serilog;
 
 namespace komikaan.Irrigator
@@ -29,18 +28,14 @@ namespace komikaan.Irrigator
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
+            builder.Services.AddHttpClient();
 
 
             AddSuppliers(builder.Services);
 
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
-            builder.Services.AddDbContext<GTFSContext>(options =>
-            {
-                options.UseNpgsql(builder.Configuration.GetConnectionString("HarvestingTarget"), o => o.UseNetTopologySuite());
-                options.UseSnakeCaseNamingConvention();
-                options.ReplaceService<ISqlGenerationHelper, NpgsqlSqlGenerationLowercasingHelper>();
-            }, optionsLifetime: ServiceLifetime.Singleton, contextLifetime: ServiceLifetime.Singleton); 
+
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
@@ -62,8 +57,7 @@ namespace komikaan.Irrigator
 
         private static void AddSuppliers(IServiceCollection serviceCollection)
         {
-            var factory = new SupplierFactory(serviceCollection);
-            factory.AddSuppliers();
+            serviceCollection.AddHostedService<GTFSRealtimeRetriever>();
         }
     }
 }
