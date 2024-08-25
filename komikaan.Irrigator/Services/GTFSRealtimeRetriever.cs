@@ -1,9 +1,12 @@
 ﻿using Dapper;
+using NetTopologySuite.Utilities;
+using Npgsql;
 using ProtoBuf;
 using System.Data;
 using System.Diagnostics;
 using System.Net;
 using TransitRealtime;
+using static Dapper.SqlMapper;
 
 namespace komikaan.Irrigator.Services
 {
@@ -37,10 +40,9 @@ namespace komikaan.Irrigator.Services
                 foreach (FeedEntity entity in feed.Entities)
                 {
                     var alert = entity.Alert;
-
                     if (alert != null)
                     {
-                        await ProcessMessageAsync(alert);
+                        await ProcessMessageAsync(entity, alert);
                     }
                 }
             }
@@ -51,39 +53,57 @@ namespace komikaan.Irrigator.Services
         }
 
 
-        private async Task ProcessMessageAsync(Alert alert)
+        private async Task ProcessMessageAsync(FeedEntity entity, Alert alert)
         {
             _logger.LogInformation("Alert: {1}, {2}, {3}, {4}, {5}", alert.HeaderText?.Translations.FirstOrDefault()?.Language, alert.DescriptionText?.Translations.FirstOrDefault()?.Language, alert.TtsDescriptionText?.Translations.FirstOrDefault()?.Language, alert.cause, alert.effect);
-            using var dbConnection = new Npgsql.NpgsqlConnection(_connectionString);
+            using var dbConnection = new NpgsqlConnection(_connectionString);
 
             await dbConnection.ExecuteAsync(
-            @"CALL public.upsert_alert(@data_origin, @internal_id, @last_updated, @active_periods, @cause, @effect, @url, @header_text, @description_text, @tts_header_text, @tts_description_text, @severity_level)",
-            new
-            {
-                data_origin = "OpenOV",
-                internal_id = Guid.NewGuid(),
-                last_updated = DateTimeOffset.UtcNow,
-                active_periods = GetActivePeriod(alert.ActivePeriods),
-                cause = alert.cause.ToString(),
-                effect = alert.effect.ToString(),
-                url = GetStringUuid(alert.Url),
-                header_text = GetStringUuid(alert.HeaderText),
-                description_text = GetStringUuid(alert.DescriptionText),
-                tts_header_text = GetStringUuid(alert.TtsHeaderText),
-                tts_description_text = GetStringUuid(alert.TtsDescriptionText),
-                severity_level = ((Alert.SeverityLevel?) alert.severity_level)?.ToString() ?? null,
-            },
-            commandType: CommandType.Text
+                @"CALL public.upsert_alert(@data_origin, @internal_id, @id, @last_updated, @active_periods, @cause, @effect, @url, @header_text, @description_text, @tts_header_text, @tts_description_text, @severity_level)",
+                new
+                {
+                    data_origin = "OpenOV",
+                    internal_id = Guid.NewGuid(),
+                    id = entity.Id,
+                    last_updated = DateTimeOffset.UtcNow,
+                    active_periods = GetActivePeriod(alert.ActivePeriods),
+                    cause = alert.cause.ToString(),
+                    effect = alert.effect.ToString(),
+                    url = alert.Url?.Translations?.FirstOrDefault()?.Text,
+                    header_text = alert.HeaderText?.Translations?.FirstOrDefault()?.Text,
+                    description_text = alert.DescriptionText?.Translations?.FirstOrDefault()?.Text,
+                    tts_header_text = alert.TtsHeaderText?.Translations?.FirstOrDefault()?.Text,
+                    tts_description_text = alert.TtsDescriptionText?.Translations?.FirstOrDefault()?.Text,
+                    severity_level = ((Alert.SeverityLevel?)alert.severity_level)?.ToString() ?? null,
+                },
+                commandType: CommandType.Text
             );
+
+            await InformEntitiesAsync(alert.InformedEntities, dbConnection);
         }
 
-        private Guid? GetStringUuid(TranslatedString? url)
+        private async Task InformEntitiesAsync(List<EntitySelector> informedEntities, NpgsqlConnection dbConnection)
         {
-            if (url != null)
+            //Todo: batching
+            _logger.LogInformation("entities to inform: {cnt}", informedEntities.Count);
+            foreach (EntitySelector entity in informedEntities)
             {
-                return Guid.Empty;
+
+                await dbConnection.ExecuteAsync(
+                    @"CALL public.upsert_alert_entities(@data_origin, @internal_id, @last_updated, @agency_id, @route_id, @trip_id, @stop_id)",
+                    new
+                    {
+                        data_origin = "OpenOV",
+                        internal_id = Guid.NewGuid(),
+                        last_updated = DateTimeOffset.UtcNow,
+                        agency_id = !string.IsNullOrWhiteSpace(entity.AgencyId) ? entity.AgencyId : null,
+                        route_id = !string.IsNullOrWhiteSpace(entity.RouteId) ? entity.RouteId : null,
+                        trip_id = entity.Trip?.TripId,
+                        stop_id = !string.IsNullOrWhiteSpace(entity.StopId) ? entity.StopId : null
+                    },
+                    commandType: CommandType.Text
+                );
             }
-            else return null;
         }
 
         private Guid GetActivePeriod(List<TimeRange> activePeriods)
