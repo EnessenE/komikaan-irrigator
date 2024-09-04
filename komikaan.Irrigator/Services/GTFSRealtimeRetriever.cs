@@ -1,8 +1,13 @@
 ﻿using Dapper;
+using NetTopologySuite.Utilities;
 using Npgsql;
+using NpgsqlTypes;
 using ProtoBuf;
+using RabbitMQ.Client;
 using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
+using System.Transactions;
 using TransitRealtime;
 using static Dapper.SqlMapper;
 
@@ -14,6 +19,8 @@ namespace komikaan.Irrigator.Services
         private readonly string? _connectionString;
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _config;
+        private readonly NpgsqlDataSourceBuilder _dataSourceBuilder;
+        private readonly NpgsqlDataSource _dataSource;
 
         public GTFSRealtimeRetriever(ILogger<GTFSRealtimeRetriever> logger, IConfiguration config, HttpClient httpClient)
         {
@@ -21,12 +28,16 @@ namespace komikaan.Irrigator.Services
             _connectionString = config.GetConnectionString("gtfs");
             _httpClient = httpClient;
             _config = config;
+            _dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
+            _dataSourceBuilder.MapComposite<PsqlTripUpdate>("trip_update_type");
+            _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
+            _dataSource = _dataSourceBuilder.Build();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
 
-            var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(10));
+            var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(30));
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("Starting a process cycle");
@@ -53,8 +64,14 @@ namespace komikaan.Irrigator.Services
                 var count = feed.Entities.Where(entity => entity.Alert != null).Count();
                 _logger.LogInformation("Alert: {cnt}", count);
                 var stop = Stopwatch.StartNew();
+                var dbConnection = await _dataSource.OpenConnectionAsync();
+                if (feed.Entities.Any(x => x.TripUpdate != null))
+                {
+                    await ProcessTripUpdateAsync(dbConnection, feed.Entities);
+                }
                 foreach (FeedEntity entity in feed.Entities)
                 {
+                    _logger.LogDebug("Processing entity {id}", entity.Id);
                     var alert = entity.Alert;
                     if (alert != null)
                     {
@@ -64,7 +81,12 @@ namespace komikaan.Irrigator.Services
                     if (vehicleUpdate != null)
                     {
                         await ProcessVehiclePositionAsync(entity.Id, vehicleUpdate);
-                        _logger.LogInformation("{x} , {y}, - trip {trip}", entity.Vehicle?.Position?.Longitude, entity.Vehicle?.Position?.Latitude, entity.Vehicle?.Trip?.TripId);
+                    }
+                    var tripUpdate = entity.TripUpdate;
+                    if (tripUpdate != null)
+                    {
+
+                        await UpdateStopTimeUpdates(entity.TripUpdate, tripUpdate.StopTimeUpdates, dbConnection);
                     }
                 }
             }
@@ -72,6 +94,67 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
             }
+        }
+
+        private async Task ProcessTripUpdateAsync(NpgsqlConnection dbConnection, IEnumerable<FeedEntity> tripUpdates)
+        {
+            using var transaction = await dbConnection.BeginTransactionAsync();
+
+            var updatesArray = tripUpdates.Select(tripUpdate => new PsqlTripUpdate
+            {
+                Id = tripUpdate.Id,
+                DataOrigin = "OpenOV",
+                InternalId = Guid.NewGuid(),
+                LastUpdated = DateTimeOffset.UtcNow,
+                Delay = tripUpdate.TripUpdate.Delay,
+                MeasurementTime = GetDTCTime(tripUpdate.TripUpdate.Timestamp)
+            }).ToArray();
+
+            var command = new NpgsqlCommand("CALL public.upsert_trip_update_array(@updates)", dbConnection)
+            {
+                CommandType = CommandType.Text,
+                Transaction = transaction
+            };
+
+            var parameter = command.Parameters.AddWithValue("@updates", updatesArray);
+            //parameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlDbType.Box;
+
+            await command.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
+        }
+
+        private async Task UpdateStopTimeUpdates(TripUpdate tripUpdate, List<TripUpdate.StopTimeUpdate> stopTimeUpdates, NpgsqlConnection dbConnection)
+        {
+            using var transaction = await dbConnection.BeginTransactionAsync();
+
+            var updatesArray = stopTimeUpdates.Select(update => new PsqlStopTimeUpdate()
+            {
+                TripId = tripUpdate.Trip.TripId,
+                DataOrigin = "OpenOV",
+                InternalId = Guid.NewGuid(),
+                LastUpdated = DateTimeOffset.UtcNow,
+                StopSequence = (int)update.StopSequence,
+                StopId = update.StopId,
+                ArrivalDelay = update.Arrival?.Delay,
+                ArrivalTime = TimeOnly.FromTimeSpan(GetDTCTime(update.Arrival?.Time)?.TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                ArrivalUncertainty = update.Arrival?.Uncertainty,
+                DepartureDelay = update.Departure?.Delay,
+                DepartureTime = TimeOnly.FromTimeSpan(GetDTCTime(update.Departure?.Time)?.TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                DepartureUncertainty = update.Departure?.Uncertainty,
+                ScheduleRelationship = update.schedule_relationship.ToString()
+            }).ToArray();
+
+            // Call the stored procedure once with the DataTable
+            var command = new NpgsqlCommand("CALL public.upsert_trip_update_array_stop_time(@updates)", dbConnection)
+            {
+                CommandType = CommandType.Text,
+                Transaction = transaction
+            };
+
+            var parameter = command.Parameters.AddWithValue("@updates", updatesArray);
+
+            await command.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
         }
 
         private async Task ProcessAlertAsync(string entityId, Alert alert)
@@ -145,18 +228,25 @@ namespace komikaan.Irrigator.Services
                 commandType: CommandType.Text
             );
         }
-        static DateTimeOffset GetDTCTime(ulong nanoseconds, ulong ticksPerNanosecond)
-        {
-            var pointOfReference = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.FromMicroseconds(0));
-            long ticks = (long)(nanoseconds / ticksPerNanosecond);
-            return pointOfReference.AddTicks(ticks);
-        }
 
-        static DateTimeOffset? GetDTCTime(ulong? nanoseconds)
+
+        static DateTimeOffset? GetDTCTime(ulong? seconds)
         {
-            if (nanoseconds != null)
+            if (seconds != null)
             {
-                return GetDTCTime(nanoseconds!.Value, 100);
+                DateTimeOffset dateTime = new DateTimeOffset(1970, 1, 1, 0, 0, 0, 0, TimeSpan.FromMicroseconds(0));
+                dateTime = dateTime.AddSeconds((long)seconds).ToLocalTime();
+                return dateTime;
+            }
+            return null;
+        }
+        static DateTimeOffset? GetDTCTime(long? seconds)
+        {
+            if (seconds != null)
+            {
+                DateTimeOffset dateTime = new DateTimeOffset(1970, 1, 1, 0, 0, 0, 0, TimeSpan.FromMicroseconds(0));
+                dateTime = dateTime.AddSeconds((long)seconds).ToLocalTime();
+                return dateTime;
             }
             return null;
         }
@@ -196,4 +286,32 @@ namespace komikaan.Irrigator.Services
         }
 
     }
+
+    public class PsqlTripUpdate
+    {
+        public string Id { get; set; }
+        public string DataOrigin { get; set; }
+        public Guid InternalId { get; set; }
+        public DateTimeOffset LastUpdated { get; set; }
+        public int? Delay { get; set; }
+        public DateTimeOffset? MeasurementTime { get; set; }
+    }
+
+    public class PsqlStopTimeUpdate
+    {
+        public string DataOrigin { get; set; }
+        public Guid InternalId { get; set; } = Guid.NewGuid();
+        public DateTimeOffset LastUpdated { get; set; } = DateTimeOffset.UtcNow;
+        public int StopSequence { get; set; }
+        public string StopId { get; set; }
+        public required string TripId { get; set; }
+        public int? ArrivalDelay { get; set; }
+        public TimeOnly? ArrivalTime { get; set; }
+        public int? ArrivalUncertainty { get; set; }
+        public int? DepartureDelay { get; set; }
+        public TimeOnly? DepartureTime { get; set; }
+        public int? DepartureUncertainty { get; set; }
+        public string ScheduleRelationship { get; set; }
+    }
+
 }
