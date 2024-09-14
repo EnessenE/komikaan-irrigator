@@ -92,6 +92,7 @@ namespace komikaan.Irrigator.Services
                 //        await ProcessAlertAsync(entity.Id, alert);
                 //    }
                 //}
+                await dbConnection.CloseAsync();
             }
             else
             {
