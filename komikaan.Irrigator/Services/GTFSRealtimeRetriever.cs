@@ -4,7 +4,9 @@ using ProtoBuf;
 using System.Data;
 using System.Diagnostics;
 using TransitRealtime;
+using komikaan.Irrigator.Extensions;
 using static Dapper.SqlMapper;
+using komikaan.Irrigator.Models;
 
 namespace komikaan.Irrigator.Services
 {
@@ -28,23 +30,31 @@ namespace komikaan.Irrigator.Services
             _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
             _dataSourceBuilder.MapComposite<PsqlPositionUpdate>("position_entity_type");
             _dataSource = _dataSourceBuilder.Build();
+
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "irrigator/reasulus.nl");
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-
-            var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(30));
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                _logger.LogInformation("Starting a process cycle");
-                //await RunImportAsync("https://gtfs.ovapi.nl/nl/alerts.pb");
-                await RunImportAsync("https://gtfs.ovapi.nl/nl/vehiclePositions.pb");
-                await RunImportAsync("https://gtfs.ovapi.nl/nl/tripUpdates.pb");
-                await RunImportAsync("https://gtfs.ovapi.nl/nl/trainUpdates.pb");
-                _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
-                await Task.Delay(interval, stoppingToken);
+                var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(30));
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Starting a process cycle");
+                    //await RunImportAsync("https://gtfs.ovapi.nl/nl/alerts.pb");
+                    await RunImportAsync("https://gtfs.ovapi.nl/nl/vehiclePositions.pb");
+                    await RunImportAsync("https://gtfs.ovapi.nl/nl/tripUpdates.pb");
+                    await RunImportAsync("https://gtfs.ovapi.nl/nl/trainUpdates.pb");
+                    _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
+                    await Task.Delay(interval, stoppingToken);
+                }
             }
-
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Something went horribly wrong, force halted processing and not continueing due to poor implentation");
+            }
+            _logger.LogInformation("This line indicated the program will stop processing from this point forward");
         }
 
         private async Task RunImportAsync(string url)
@@ -59,39 +69,31 @@ namespace komikaan.Irrigator.Services
                 FeedMessage feed = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
                 _logger.LogInformation("Parsed pb.");
                 _logger.LogInformation("Entities: {cnt}", feed.Entities.Count);
-
-                var count = feed.Entities.Where(entity => entity.Alert != null).Count();
-                _logger.LogInformation("Alert: {cnt}", count);
+                _logger.LogInformation("Alert: {cnt}", feed.Entities.Where(entity => entity.Alert != null).Count());
                 _logger.LogInformation("VehicleUpdates: {cnt}", feed.Entities.Where(entity => entity.Vehicle != null).Count());
+
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
+
+
                 if (feed.Entities.Any(x => x.TripUpdate != null))
                 {
                     await ProcessTripUpdateAsync(dbConnection, feed.Entities);
-                    foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).Chunk(500))
+                    foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).ToList().ChunkBy(500))
                     {
                         await UpdateStopTimeUpdates(batch, dbConnection);
                     }
                 }
+
                 if (feed.Entities.Any(x => x.Vehicle != null))
                 {
-                    await ProcessTripUpdateAsync(dbConnection, feed.Entities);
-                    var vehiclePositonsToUpdate = feed.Entities.Select(x => new Tuple<FeedEntity, VehiclePosition>(x, x.Vehicle)).Chunk(500);
+                    var vehiclePositonsToUpdate = feed.Entities.Select(x => new Tuple<FeedEntity, VehiclePosition>(x, x.Vehicle)).ToList();
                     _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
-                    foreach (var batch in vehiclePositonsToUpdate.Chunk(5))
+                    foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                     {
-                        await ProcessVehiclePositionAsync(batch.ToList());
+                        await ProcessVehiclePositionAsync(dbConnection, batch);
                     }
                 }
-                //foreach (FeedEntity entity in feed.Entities)
-                //{
-                //    _logger.LogDebug("Processing entity {id}", entity.Id);
-                //    var alert = entity.Alert;
-                //    if (alert != null)
-                //    {
-                //        await ProcessAlertAsync(entity.Id, alert);
-                //    }
-                //}
                 await dbConnection.CloseAsync();
             }
             else
@@ -118,10 +120,10 @@ namespace komikaan.Irrigator.Services
                     StopSequence = (int)update.StopSequence,
                     StopId = update.StopId,
                     ArrivalDelay = update.Arrival?.Delay,
-                    ArrivalTime = TimeOnly.FromTimeSpan(GetDTCTime(update.Arrival?.Time)?.TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                    ArrivalTime = TimeOnly.FromTimeSpan(update.Arrival?.Time.ToDateTime().TimeOfDay ?? TimeSpan.FromSeconds(0)),
                     ArrivalUncertainty = update.Arrival?.Uncertainty,
                     DepartureDelay = update.Departure?.Delay,
-                    DepartureTime = TimeOnly.FromTimeSpan(GetDTCTime(update.Departure?.Time)?.TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                    DepartureTime = TimeOnly.FromTimeSpan(update.Departure?.Time.ToDateTime().TimeOfDay ?? TimeSpan.FromSeconds(0)),
                     DepartureUncertainty = update.Departure?.Uncertainty,
                     ScheduleRelationship = update.schedule_relationship.ToString()
                 }).ToArray();
@@ -155,7 +157,7 @@ namespace komikaan.Irrigator.Services
                 InternalId = Guid.NewGuid(),
                 LastUpdated = DateTimeOffset.UtcNow,
                 Delay = tripUpdate.TripUpdate?.Delay,
-                MeasurementTime = GetDTCTime(tripUpdate.TripUpdate?.Timestamp)
+                MeasurementTime = tripUpdate.TripUpdate?.Timestamp.ToDateTime()
             }).ToArray();
 
             var command = new NpgsqlCommand("CALL public.upsert_trip_update_array(@updates)", dbConnection)
@@ -165,7 +167,6 @@ namespace komikaan.Irrigator.Services
             };
 
             var parameter = command.Parameters.AddWithValue("@updates", updatesArray);
-            //parameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlDbType.Box;
 
             await command.ExecuteNonQueryAsync();
             await transaction.CommitAsync();
@@ -175,17 +176,14 @@ namespace komikaan.Irrigator.Services
 
 
 
-        private async Task ProcessVehiclePositionAsync(List<Tuple<FeedEntity, VehiclePosition>[]> vehicleUpdates)
+        private async Task ProcessVehiclePositionAsync(NpgsqlConnection dbConnection, List<Tuple<FeedEntity, VehiclePosition>> vehicleUpdates)
         {
             _logger.LogInformation("Inserting vehicle positions {items}", vehicleUpdates.Count);
-            var dbConnection = await _dataSource.OpenConnectionAsync();
             using var transaction = await dbConnection.BeginTransactionAsync();
             var items = new List<PsqlPositionUpdate>();
 
-            foreach (var vehiclePositions in vehicleUpdates)
-            {
                 // Prepare the array of positions to be inserted
-                var positionArray = vehiclePositions.Select(vehiclePosition =>
+                var positionArray = vehicleUpdates.Select(vehiclePosition =>
                 {
                     double? latitude = null;
                     double? longitude = null;
@@ -207,14 +205,13 @@ namespace komikaan.Irrigator.Services
                         longitude = longitude,
                         stop_id = string.IsNullOrWhiteSpace(vehiclePosition.Item2.StopId) ? null : vehiclePosition.Item2.StopId,
                         current_status = vehiclePosition.Item2.CurrentStatus.ToString(),
-                        measurement_time = GetDTCTime(vehiclePosition.Item2.Timestamp),
+                        measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
                         congestion_level = vehiclePosition.Item2.congestion_level.ToString(),
                         occupancy_status = vehiclePosition.Item2.occupancy_status.ToString(),
                         occupancy_percentage = null
                     };
                 }).ToArray();
                 items.AddRange(positionArray);
-            }
 
             // Define the command for batched upsert
             var command = new NpgsqlCommand("CALL public.upsert_position_array(@positions)", dbConnection)
@@ -233,52 +230,6 @@ namespace komikaan.Irrigator.Services
             _logger.LogInformation("Finished inserting vehicle positions");
         }
 
-
-        static DateTimeOffset? GetDTCTime(ulong? seconds)
-        {
-            return GetDTCTime((long?)seconds);
-        }
-
-        static DateTimeOffset? GetDTCTime(long? seconds)
-        {
-            if (seconds != null)
-            {
-                DateTimeOffset dateTime = new DateTimeOffset(1970, 1, 1, 0, 0, 0, 0, TimeSpan.FromMicroseconds(0));
-                dateTime = dateTime.AddSeconds((long)seconds).ToLocalTime();
-                return dateTime;
-            }
-            return null;
-        }
-
-        private async Task ProcessAlertAsync(string entityId, Alert alert)
-        {
-            //Todo: batching
-            _logger.LogInformation("Alert: {1}, {2}, {3}, {4}, {5}", alert.HeaderText?.Translations.FirstOrDefault()?.Language, alert.DescriptionText?.Translations.FirstOrDefault()?.Language, alert.TtsDescriptionText?.Translations.FirstOrDefault()?.Language, alert.cause, alert.effect);
-            using var dbConnection = new NpgsqlConnection(_connectionString);
-
-            await dbConnection.ExecuteAsync(
-                @"CALL public.upsert_alert(@data_origin, @internal_id, @id, @last_updated, @active_periods, @cause, @effect, @url, @header_text, @description_text, @tts_header_text, @tts_description_text, @severity_level)",
-                new
-                {
-                    data_origin = "OpenOV",
-                    internal_id = Guid.NewGuid(),
-                    id = entityId,
-                    last_updated = DateTimeOffset.UtcNow,
-                    active_periods = GetActivePeriod(alert.ActivePeriods),
-                    cause = alert.cause.ToString(),
-                    effect = alert.effect.ToString(),
-                    url = alert.Url?.Translations?.FirstOrDefault()?.Text,
-                    header_text = alert.HeaderText?.Translations?.FirstOrDefault()?.Text,
-                    description_text = alert.DescriptionText?.Translations?.FirstOrDefault()?.Text,
-                    tts_header_text = alert.TtsHeaderText?.Translations?.FirstOrDefault()?.Text,
-                    tts_description_text = alert.TtsDescriptionText?.Translations?.FirstOrDefault()?.Text,
-                    severity_level = ((Alert.SeverityLevel?)alert.severity_level)?.ToString() ?? null,
-                },
-                commandType: CommandType.Text
-            );
-
-            await InformEntitiesAsync(alert.InformedEntities, dbConnection);
-        }
 
         private async Task InformEntitiesAsync(List<EntitySelector> informedEntities, NpgsqlConnection dbConnection)
         {
@@ -313,34 +264,5 @@ namespace komikaan.Irrigator.Services
         {
             return Task.CompletedTask;
         }
-
     }
-
-    public class PsqlTripUpdate
-    {
-        public string Id { get; set; }
-        public string DataOrigin { get; set; }
-        public Guid InternalId { get; set; }
-        public DateTimeOffset LastUpdated { get; set; }
-        public int? Delay { get; set; }
-        public DateTimeOffset? MeasurementTime { get; set; }
-    }
-
-    public class PsqlStopTimeUpdate
-    {
-        public string DataOrigin { get; set; }
-        public Guid InternalId { get; set; } = Guid.NewGuid();
-        public DateTimeOffset LastUpdated { get; set; } = DateTimeOffset.UtcNow;
-        public int StopSequence { get; set; }
-        public string StopId { get; set; }
-        public required string TripId { get; set; }
-        public int? ArrivalDelay { get; set; }
-        public TimeOnly? ArrivalTime { get; set; }
-        public int? ArrivalUncertainty { get; set; }
-        public int? DepartureDelay { get; set; }
-        public TimeOnly? DepartureTime { get; set; }
-        public int? DepartureUncertainty { get; set; }
-        public string ScheduleRelationship { get; set; }
-    }
-
 }

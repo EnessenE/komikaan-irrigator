@@ -7,4 +7,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.1.0]
 ### Added
-- Basic retrieval of alerts and saving into the database
+- Basic retrieval of positions and tripupdates and saving into the database
