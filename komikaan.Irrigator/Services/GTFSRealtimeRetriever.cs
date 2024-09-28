@@ -21,6 +21,8 @@ namespace komikaan.Irrigator.Services
 
         public GTFSRealtimeRetriever(ILogger<GTFSRealtimeRetriever> logger, IConfiguration config, HttpClient httpClient)
         {
+            Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
+
             _logger = logger;
             _connectionString = config.GetConnectionString("gtfs");
             _httpClient = httpClient;
@@ -46,17 +48,19 @@ namespace komikaan.Irrigator.Services
 
                     foreach (var feed in realtimeFeeds)
                     {
-                        using (_logger.BeginScope(feed.SupplierConfigurationName)) ;
-                        if (feed.Enabled)
+                        using (_logger.BeginScope(feed.SupplierConfigurationName))
                         {
-                            _logger.LogInformation("Started an import");
-                            await RunImportAsync(feed);
-                        }
-                        else
-                        {
-                            _logger.LogInformation("Skipped as its disabled");
-                        }
+                            if (feed.Enabled)
+                            {
+                                _logger.LogInformation("Started an import");
+                                await RunImportAsync(feed);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("Skipped as its disabled");
+                            }
 
+                        }
                     }
                     _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
                     await Task.Delay(interval, stoppingToken);

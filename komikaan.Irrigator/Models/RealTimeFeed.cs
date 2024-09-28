@@ -1,9 +1,11 @@
 ﻿namespace komikaan.Irrigator.Models
 {
-    internal class RealTimeFeed
+    public class RealTimeFeed
     {
         public string Url { get; set; }
         public string SupplierConfigurationName { get; set; }
         public bool Enabled { get; set; }
+        public TimeSpan PollingRate { get; set; }
+        public DateTimeOffset LastAttempt { get; set; }
     }
 }
