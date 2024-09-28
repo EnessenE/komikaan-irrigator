@@ -21,6 +21,8 @@ namespace komikaan.Irrigator.Services
 
         public GTFSRealtimeRetriever(ILogger<GTFSRealtimeRetriever> logger, IConfiguration config, HttpClient httpClient)
         {
+            Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
+
             _logger = logger;
             _connectionString = config.GetConnectionString("gtfs");
             _httpClient = httpClient;
@@ -41,11 +43,25 @@ namespace komikaan.Irrigator.Services
                 var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(30));
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    _logger.LogInformation("Starting a process cycle");
-                    //await RunImportAsync("https://gtfs.ovapi.nl/nl/alerts.pb");
-                    await RunImportAsync("https://gtfs.ovapi.nl/nl/vehiclePositions.pb");
-                    await RunImportAsync("https://gtfs.ovapi.nl/nl/tripUpdates.pb");
-                    await RunImportAsync("https://gtfs.ovapi.nl/nl/trainUpdates.pb");
+                    var realtimeFeeds = await GetFeedsAsync();
+                    _logger.LogInformation("Starting a process cycle for {amount} feeds", realtimeFeeds.Count);
+
+                    foreach (var feed in realtimeFeeds)
+                    {
+                        using (_logger.BeginScope(feed.SupplierConfigurationName))
+                        {
+                            if (feed.Enabled)
+                            {
+                                _logger.LogInformation("Started an import");
+                                await RunImportAsync(feed);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("Skipped as its disabled");
+                            }
+
+                        }
+                    }
                     _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
                     await Task.Delay(interval, stoppingToken);
                 }
@@ -57,43 +73,38 @@ namespace komikaan.Irrigator.Services
             _logger.LogInformation("This line indicated the program will stop processing from this point forward");
         }
 
-        private async Task RunImportAsync(string url)
+        private async Task<List<RealTimeFeed>> GetFeedsAsync()
+        {
+            await using var connection = await (_dataSourceBuilder.Build()).OpenConnectionAsync();
+            var data = await connection.QueryAsync<RealTimeFeed>(
+            @"select * from get_all_realtime_feeds()",
+                commandType: CommandType.Text
+            );
+            return data.ToList();
+        }
+
+        private async Task RunImportAsync(RealTimeFeed feed)
         {
             //TODO: Figure out scaling how to factor in supplierconfigurations for many feeds
             //TODO: Actually scale this in all directions
             //TODO: what is this mess i made
-            var response = await _httpClient.GetAsync(url);
+
+            var response = await _httpClient.GetAsync(feed.Url);
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("Downloaded pb.");
-                FeedMessage feed = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
+                FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
                 _logger.LogInformation("Parsed pb.");
-                _logger.LogInformation("Entities: {cnt}", feed.Entities.Count);
-                _logger.LogInformation("Alert: {cnt}", feed.Entities.Where(entity => entity.Alert != null).Count());
-                _logger.LogInformation("VehicleUpdates: {cnt}", feed.Entities.Where(entity => entity.Vehicle != null).Count());
+                _logger.LogInformation("Entities: {cnt}", feedMessage.Entities.Count);
+                _logger.LogInformation("Alert: {cnt}", feedMessage.Entities.Where(entity => entity.Alert != null).Count());
+                _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(entity => entity.Vehicle != null).Count());
 
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
 
+                await DetectTripUpdate(feedMessage, dbConnection);
+                await DetectVehicleUpdate(feedMessage, dbConnection);
 
-                if (feed.Entities.Any(x => x.TripUpdate != null))
-                {
-                    await ProcessTripUpdateAsync(dbConnection, feed.Entities);
-                    foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).ToList().ChunkBy(500))
-                    {
-                        await UpdateStopTimeUpdates(batch, dbConnection);
-                    }
-                }
-
-                if (feed.Entities.Any(x => x.Vehicle != null))
-                {
-                    var vehiclePositonsToUpdate = feed.Entities.Select(x => new Tuple<FeedEntity, VehiclePosition>(x, x.Vehicle)).ToList();
-                    _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
-                    foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
-                    {
-                        await ProcessVehiclePositionAsync(dbConnection, batch);
-                    }
-                }
                 await dbConnection.CloseAsync();
             }
             else
@@ -102,6 +113,30 @@ namespace komikaan.Irrigator.Services
             }
         }
 
+        private async Task DetectTripUpdate(FeedMessage feed, NpgsqlConnection dbConnection)
+        {
+            if (feed.Entities.Any(x => x.TripUpdate != null))
+            {
+                await ProcessTripUpdateAsync(dbConnection, feed.Entities);
+                foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).ToList().ChunkBy(500))
+                {
+                    await UpdateStopTimeUpdates(batch, dbConnection);
+                }
+            }
+        }
+
+        private async Task DetectVehicleUpdate(FeedMessage feed, NpgsqlConnection dbConnection)
+        {
+            if (feed.Entities.Any(x => x.Vehicle != null))
+            {
+                var vehiclePositonsToUpdate = feed.Entities.Select(x => new Tuple<FeedEntity, VehiclePosition>(x, x.Vehicle)).ToList();
+                _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
+                foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
+                {
+                    await ProcessVehiclePositionAsync(dbConnection, batch);
+                }
+            }
+        }
 
         private async Task UpdateStopTimeUpdates(IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>> updates, NpgsqlConnection dbConnection)
         {
@@ -182,36 +217,36 @@ namespace komikaan.Irrigator.Services
             using var transaction = await dbConnection.BeginTransactionAsync();
             var items = new List<PsqlPositionUpdate>();
 
-                // Prepare the array of positions to be inserted
-                var positionArray = vehicleUpdates.Select(vehiclePosition =>
-                {
-                    double? latitude = null;
-                    double? longitude = null;
-                    
-                    if (vehiclePosition.Item2.Position != null)
-                    {
-                        latitude = (double)vehiclePosition.Item2.Position?.Latitude;
-                        longitude = (double)vehiclePosition.Item2.Position?.Longitude;
-                    }
+            // Prepare the array of positions to be inserted
+            var positionArray = vehicleUpdates.Select(vehiclePosition =>
+            {
+                double? latitude = null;
+                double? longitude = null;
 
-                    return new PsqlPositionUpdate
-                    {
-                        id = vehiclePosition.Item1.Id,
-                        data_origin = "OpenOV",
-                        internal_id = Guid.NewGuid(),
-                        last_updated = DateTimeOffset.UtcNow,
-                        trip_id = vehiclePosition.Item2.Trip?.TripId,
-                        latitude = latitude,
-                        longitude = longitude,
-                        stop_id = string.IsNullOrWhiteSpace(vehiclePosition.Item2.StopId) ? null : vehiclePosition.Item2.StopId,
-                        current_status = vehiclePosition.Item2.CurrentStatus.ToString(),
-                        measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
-                        congestion_level = vehiclePosition.Item2.congestion_level.ToString(),
-                        occupancy_status = vehiclePosition.Item2.occupancy_status.ToString(),
-                        occupancy_percentage = null
-                    };
-                }).ToArray();
-                items.AddRange(positionArray);
+                if (vehiclePosition.Item2.Position != null)
+                {
+                    latitude = (double)vehiclePosition.Item2.Position?.Latitude;
+                    longitude = (double)vehiclePosition.Item2.Position?.Longitude;
+                }
+
+                return new PsqlPositionUpdate
+                {
+                    id = vehiclePosition.Item1.Id,
+                    data_origin = "OpenOV",
+                    internal_id = Guid.NewGuid(),
+                    last_updated = DateTimeOffset.UtcNow,
+                    trip_id = vehiclePosition.Item2.Trip?.TripId,
+                    latitude = latitude,
+                    longitude = longitude,
+                    stop_id = string.IsNullOrWhiteSpace(vehiclePosition.Item2.StopId) ? null : vehiclePosition.Item2.StopId,
+                    current_status = vehiclePosition.Item2.CurrentStatus.ToString(),
+                    measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
+                    congestion_level = vehiclePosition.Item2.congestion_level.ToString(),
+                    occupancy_status = vehiclePosition.Item2.occupancy_status.ToString(),
+                    occupancy_percentage = null
+                };
+            }).ToArray();
+            items.AddRange(positionArray);
 
             // Define the command for batched upsert
             var command = new NpgsqlCommand("CALL public.upsert_position_array(@positions)", dbConnection)
