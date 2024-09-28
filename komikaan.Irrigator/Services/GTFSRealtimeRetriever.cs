@@ -155,10 +155,10 @@ namespace komikaan.Irrigator.Services
                     StopSequence = (int)update.StopSequence,
                     StopId = update.StopId,
                     ArrivalDelay = update.Arrival?.Delay,
-                    ArrivalTime = TimeOnly.FromTimeSpan(update.Arrival?.Time.ToDateTime().TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                    ArrivalTime = GetTime(update.Arrival?.Time),
                     ArrivalUncertainty = update.Arrival?.Uncertainty,
                     DepartureDelay = update.Departure?.Delay,
-                    DepartureTime = TimeOnly.FromTimeSpan(update.Departure?.Time.ToDateTime().TimeOfDay ?? TimeSpan.FromSeconds(0)),
+                    DepartureTime = GetTime(update.Departure?.Time),
                     DepartureUncertainty = update.Departure?.Uncertainty,
                     ScheduleRelationship = update.schedule_relationship.ToString()
                 }).ToArray();
@@ -178,6 +178,15 @@ namespace komikaan.Irrigator.Services
 
             await command.ExecuteNonQueryAsync();
             await transaction.CommitAsync();
+        }
+
+        private static TimeOnly? GetTime(long? update)
+        {
+            if (update.HasValue)
+            {
+                return TimeOnly.FromTimeSpan(update.ToDateTime()!.Value.TimeOfDay);
+            }
+            return null;
         }
 
         private async Task ProcessTripUpdateAsync(NpgsqlConnection dbConnection, IEnumerable<FeedEntity> tripUpdates)
