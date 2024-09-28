@@ -102,8 +102,8 @@ namespace komikaan.Irrigator.Services
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
 
-                await DetectTripUpdate(feedMessage, dbConnection);
-                await DetectVehicleUpdate(feedMessage, dbConnection);
+                await DetectTripUpdate(feed, feedMessage, dbConnection);
+                await DetectVehicleUpdate(feed, feedMessage, dbConnection);
 
                 await dbConnection.CloseAsync();
             }
@@ -113,19 +113,19 @@ namespace komikaan.Irrigator.Services
             }
         }
 
-        private async Task DetectTripUpdate(FeedMessage feed, NpgsqlConnection dbConnection)
+        private async Task DetectTripUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
         {
             if (feed.Entities.Any(x => x.TripUpdate != null))
             {
-                await ProcessTripUpdateAsync(dbConnection, feed.Entities);
+                await ProcessTripUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
                 foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).ToList().ChunkBy(500))
                 {
-                    await UpdateStopTimeUpdates(batch, dbConnection);
+                    await UpdateStopTimeUpdates(realtimeFeed, batch, dbConnection);
                 }
             }
         }
 
-        private async Task DetectVehicleUpdate(FeedMessage feed, NpgsqlConnection dbConnection)
+        private async Task DetectVehicleUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
@@ -133,12 +133,12 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
-                    await ProcessVehiclePositionAsync(dbConnection, batch);
+                    await ProcessVehiclePositionAsync(realtimeFeed, dbConnection, batch);
                 }
             }
         }
 
-        private async Task UpdateStopTimeUpdates(IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>> updates, NpgsqlConnection dbConnection)
+        private async Task UpdateStopTimeUpdates(RealTimeFeed feed, IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>> updates, NpgsqlConnection dbConnection)
         {
             _logger.LogInformation("Collecting stop time updates data");
             using var transaction = await dbConnection.BeginTransactionAsync();
@@ -149,7 +149,7 @@ namespace komikaan.Irrigator.Services
                 var updatesArray = tripBundle.Item2.Select(update => new PsqlStopTimeUpdate()
                 {
                     TripId = tripBundle.Item1.TripUpdate.Trip.TripId,
-                    DataOrigin = "OpenOV",
+                    DataOrigin = feed.SupplierConfigurationName,
                     InternalId = Guid.NewGuid(),
                     LastUpdated = DateTimeOffset.UtcNow,
                     StopSequence = (int)update.StopSequence,
@@ -189,7 +189,7 @@ namespace komikaan.Irrigator.Services
             return null;
         }
 
-        private async Task ProcessTripUpdateAsync(NpgsqlConnection dbConnection, IEnumerable<FeedEntity> tripUpdates)
+        private async Task ProcessTripUpdateAsync(RealTimeFeed feed, NpgsqlConnection dbConnection, IEnumerable<FeedEntity> tripUpdates)
         {
             _logger.LogInformation("Inserting trip updates");
             using var transaction = await dbConnection.BeginTransactionAsync();
@@ -197,7 +197,7 @@ namespace komikaan.Irrigator.Services
             var updatesArray = tripUpdates.Select(tripUpdate => new PsqlTripUpdate
             {
                 Id = tripUpdate.Id,
-                DataOrigin = "OpenOV",
+                DataOrigin = feed.SupplierConfigurationName,
                 InternalId = Guid.NewGuid(),
                 LastUpdated = DateTimeOffset.UtcNow,
                 Delay = tripUpdate.TripUpdate?.Delay,
@@ -220,7 +220,7 @@ namespace komikaan.Irrigator.Services
 
 
 
-        private async Task ProcessVehiclePositionAsync(NpgsqlConnection dbConnection, List<Tuple<FeedEntity, VehiclePosition>> vehicleUpdates)
+        private async Task ProcessVehiclePositionAsync(RealTimeFeed feed, NpgsqlConnection dbConnection, List<Tuple<FeedEntity, VehiclePosition>> vehicleUpdates)
         {
             _logger.LogInformation("Inserting vehicle positions {items}", vehicleUpdates.Count);
             using var transaction = await dbConnection.BeginTransactionAsync();
@@ -241,7 +241,7 @@ namespace komikaan.Irrigator.Services
                 return new PsqlPositionUpdate
                 {
                     id = vehiclePosition.Item1.Id,
-                    data_origin = "OpenOV",
+                    data_origin = feed.SupplierConfigurationName,
                     internal_id = Guid.NewGuid(),
                     last_updated = DateTimeOffset.UtcNow,
                     trip_id = vehiclePosition.Item2.Trip?.TripId,
@@ -275,7 +275,7 @@ namespace komikaan.Irrigator.Services
         }
 
 
-        private async Task InformEntitiesAsync(List<EntitySelector> informedEntities, NpgsqlConnection dbConnection)
+        private async Task InformEntitiesAsync(RealTimeFeed feed, List<EntitySelector> informedEntities, NpgsqlConnection dbConnection)
         {
             //Todo: batching
             _logger.LogInformation("entities to inform: {cnt}", informedEntities.Count);
@@ -286,7 +286,7 @@ namespace komikaan.Irrigator.Services
                     @"CALL public.upsert_alert_entities(@data_origin, @internal_id, @last_updated, @agency_id, @route_id, @trip_id, @stop_id)",
                     new
                     {
-                        data_origin = "OpenOV",
+                        data_origin = feed.SupplierConfigurationName,
                         internal_id = Guid.NewGuid(),
                         last_updated = DateTimeOffset.UtcNow,
                         agency_id = !string.IsNullOrWhiteSpace(entity.AgencyId) ? entity.AgencyId : null,
