@@ -52,6 +52,7 @@ namespace komikaan.Irrigator
             app.UseSerilogRequestLogging();
 
             app.MapControllers();
+            app.UseHealthChecks("/health");
 
             app.Run();
         }
@@ -59,7 +60,7 @@ namespace komikaan.Irrigator
         private static void ConfigureHealthChecks(WebApplicationBuilder builder)
         {
             builder.Services.AddNpgsqlDataSource(builder.Configuration.GetConnectionString("gtfs")!);
-            builder.Services.AddHealthChecks().AddNpgSql();
+            builder.Services.AddHealthChecks().AddNpgSql(name: "gtfs database");
         }
 
         private static void AddSuppliers(IServiceCollection serviceCollection)
