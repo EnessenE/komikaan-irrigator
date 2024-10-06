@@ -53,7 +53,7 @@ namespace komikaan.Irrigator.Services
                             if (feed.Enabled)
                             {
                                 _logger.LogInformation("Started an import");
-                                await RunImportAsync(feed);
+                                await RunFeedImport(feed, stoppingToken);
                             }
                             else
                             {
@@ -73,6 +73,18 @@ namespace komikaan.Irrigator.Services
             _logger.LogInformation("This line indicated the program will stop processing from this point forward");
         }
 
+        private async Task RunFeedImport(RealTimeFeed feed, CancellationToken stoppingToken)
+        {
+            try
+            {
+                await FeedImport(feed);
+            }
+            catch(NpgsqlException exception)
+            {
+                _logger.LogError(exception, "Database failure while importing");
+            }
+        }
+
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
         {
             await using var connection = await (_dataSourceBuilder.Build()).OpenConnectionAsync();
@@ -83,7 +95,7 @@ namespace komikaan.Irrigator.Services
             return data.ToList();
         }
 
-        private async Task RunImportAsync(RealTimeFeed feed)
+        private async Task FeedImport(RealTimeFeed feed)
         {
             //TODO: Figure out scaling how to factor in supplierconfigurations for many feeds
             //TODO: Actually scale this in all directions
@@ -118,7 +130,7 @@ namespace komikaan.Irrigator.Services
             if (feed.Entities.Any(x => x.TripUpdate != null))
             {
                 await ProcessTripUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
-                foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>(x, x.TripUpdate.StopTimeUpdates)).ToList().ChunkBy(500))
+                foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>?>(x, x.TripUpdate?.StopTimeUpdates)).ToList().ChunkBy(500))
                 {
                     await UpdateStopTimeUpdates(realtimeFeed, batch, dbConnection);
                 }
@@ -138,7 +150,7 @@ namespace komikaan.Irrigator.Services
             }
         }
 
-        private async Task UpdateStopTimeUpdates(RealTimeFeed feed, IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>>> updates, NpgsqlConnection dbConnection)
+        private async Task UpdateStopTimeUpdates(RealTimeFeed feed, IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>?>> updates, NpgsqlConnection dbConnection)
         {
             _logger.LogInformation("Collecting stop time updates data");
             using var transaction = await dbConnection.BeginTransactionAsync();
@@ -146,23 +158,26 @@ namespace komikaan.Irrigator.Services
 
             foreach (var tripBundle in updates)
             {
-                var updatesArray = tripBundle.Item2.Select(update => new PsqlStopTimeUpdate()
+                if (tripBundle.Item2 != null)
                 {
-                    TripId = tripBundle.Item1.TripUpdate.Trip.TripId,
-                    DataOrigin = feed.SupplierConfigurationName,
-                    InternalId = Guid.NewGuid(),
-                    LastUpdated = DateTimeOffset.UtcNow,
-                    StopSequence = (int)update.StopSequence,
-                    StopId = update.StopId,
-                    ArrivalDelay = update.Arrival?.Delay,
-                    ArrivalTime = GetTime(update.Arrival?.Time),
-                    ArrivalUncertainty = update.Arrival?.Uncertainty,
-                    DepartureDelay = update.Departure?.Delay,
-                    DepartureTime = GetTime(update.Departure?.Time),
-                    DepartureUncertainty = update.Departure?.Uncertainty,
-                    ScheduleRelationship = update.schedule_relationship.ToString()
-                }).ToArray();
-                stopTimeUpdates.AddRange(updatesArray);
+                    var updatesArray = tripBundle.Item2.Select(update => new PsqlStopTimeUpdate()
+                    {
+                        TripId = tripBundle.Item1.TripUpdate.Trip.TripId,
+                        DataOrigin = feed.SupplierConfigurationName,
+                        InternalId = Guid.NewGuid(),
+                        LastUpdated = DateTimeOffset.UtcNow,
+                        StopSequence = (int)update.StopSequence,
+                        StopId = update.StopId,
+                        ArrivalDelay = update.Arrival?.Delay,
+                        ArrivalTime = GetTime(update.Arrival?.Time),
+                        ArrivalUncertainty = update.Arrival?.Uncertainty,
+                        DepartureDelay = update.Departure?.Delay,
+                        DepartureTime = GetTime(update.Departure?.Time),
+                        DepartureUncertainty = update.Departure?.Uncertainty,
+                        ScheduleRelationship = update.schedule_relationship.ToString()
+                    }).ToArray();
+                    stopTimeUpdates.AddRange(updatesArray);
+                }
 
             }
 
