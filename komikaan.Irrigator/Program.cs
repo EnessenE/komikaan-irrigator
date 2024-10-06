@@ -35,6 +35,7 @@ namespace komikaan.Irrigator
 
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
+            ConfigureHealthChecks(builder);
 
             var app = builder.Build();
 
@@ -53,6 +54,12 @@ namespace komikaan.Irrigator
             app.MapControllers();
 
             app.Run();
+        }
+
+        private static void ConfigureHealthChecks(WebApplicationBuilder builder)
+        {
+            builder.Services.AddNpgsqlDataSource(builder.Configuration.GetConnectionString("gtfs")!);
+            builder.Services.AddHealthChecks().AddNpgSql();
         }
 
         private static void AddSuppliers(IServiceCollection serviceCollection)
