@@ -22,7 +22,7 @@
             if (seconds != null)
             {
                 DateTimeOffset dateTime = new DateTimeOffset(1970, 1, 1, 0, 0, 0, 0, TimeSpan.FromMicroseconds(0));
-                dateTime = dateTime.AddSeconds((long)seconds).ToLocalTime();
+                dateTime = dateTime.AddSeconds((long)seconds).ToUniversalTime();
                 return dateTime;
             }
             return null;
