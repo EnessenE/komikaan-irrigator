@@ -199,7 +199,7 @@ namespace komikaan.Irrigator.Services
         {
             if (update.HasValue)
             {
-                return TimeOnly.FromTimeSpan(update.ToDateTime()!.Value.TimeOfDay);
+                return TimeOnly.FromTimeSpan(update.ToDateTime()!.Value.ToUniversalTime().TimeOfDay);
             }
             return null;
         }
