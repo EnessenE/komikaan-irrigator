@@ -9,10 +9,10 @@
         public string StopId { get; set; }
         public required string TripId { get; set; }
         public int? ArrivalDelay { get; set; }
-        public TimeOnly? ArrivalTime { get; set; }
+        public DateTimeOffset? ArrivalTime { get; set; }
         public int? ArrivalUncertainty { get; set; }
         public int? DepartureDelay { get; set; }
-        public TimeOnly? DepartureTime { get; set; }
+        public DateTimeOffset? DepartureTime { get; set; }
         public int? DepartureUncertainty { get; set; }
         public string ScheduleRelationship { get; set; }
     }
