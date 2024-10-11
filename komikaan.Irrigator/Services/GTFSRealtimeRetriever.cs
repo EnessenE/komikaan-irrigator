@@ -7,6 +7,9 @@ using TransitRealtime;
 using komikaan.Irrigator.Extensions;
 using static Dapper.SqlMapper;
 using komikaan.Irrigator.Models;
+using System.Net;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+using ProtoBuf.WellKnownTypes;
 
 namespace komikaan.Irrigator.Services
 {
@@ -79,7 +82,20 @@ namespace komikaan.Irrigator.Services
             {
                 await FeedImport(feed);
             }
-            catch(NpgsqlException exception)
+            catch (HttpRequestException exception)
+            {
+                _logger.LogError(exception, "Failed to write away exception");
+                if (exception.StatusCode != null)
+                {
+                    var code = (int)exception.StatusCode;
+                    if (code >= 400 && code <= 499)
+                    {
+                        _logger.LogError("Unaccepted error, crashing loop");
+                        throw;
+                    }
+                }
+            }
+            catch (NpgsqlException exception)
             {
                 _logger.LogError(exception, "Database failure while importing");
             }
@@ -199,7 +215,9 @@ namespace komikaan.Irrigator.Services
         {
             if (update.HasValue)
             {
-                return TimeOnly.FromTimeSpan(update.ToDateTime()!.Value.ToUniversalTime().TimeOfDay);
+                DateTime origin = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
+                origin = origin.AddSeconds(update!.Value);
+                return TimeOnly.FromDateTime(origin);
             }
             return null;
         }
