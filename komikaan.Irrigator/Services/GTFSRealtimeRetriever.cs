@@ -211,13 +211,13 @@ namespace komikaan.Irrigator.Services
             await transaction.CommitAsync();
         }
 
-        private static TimeOnly? GetTime(long? update)
+        private static DateTimeOffset? GetTime(long? update)
         {
             if (update.HasValue)
             {
                 DateTime origin = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
                 origin = origin.AddSeconds(update!.Value);
-                return TimeOnly.FromDateTime(origin);
+                return origin;
             }
             return null;
         }
