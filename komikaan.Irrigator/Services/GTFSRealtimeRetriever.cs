@@ -176,9 +176,6 @@ namespace komikaan.Irrigator.Services
             {
                 if (tripBundle.Item2 != null)
                 {
-                    var x = tripBundle.Item2.ToList().FirstOrDefault()?.Arrival.Time.
-                    _logger.LogInformation("lol {a}", GetTime(tripBundle.Item2.ToList().FirstOrDefault()?.Arrival?.Time));
-                    _logger.LogInformation("lol2 {a}", GetTime(tripBundle.Item2.ToList().FirstOrDefault()?.Departure?.Time));
                     var updatesArray = tripBundle.Item2.Select(update => new PsqlStopTimeUpdate()
                     {
                         TripId = tripBundle.Item1.TripUpdate.Trip.TripId,
