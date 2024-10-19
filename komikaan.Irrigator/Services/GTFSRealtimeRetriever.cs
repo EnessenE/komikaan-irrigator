@@ -103,12 +103,20 @@ namespace komikaan.Irrigator.Services
 
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
         {
-            await using var connection = await (_dataSourceBuilder.Build()).OpenConnectionAsync();
-            var data = await connection.QueryAsync<RealTimeFeed>(
-            @"select * from get_all_realtime_feeds()",
-                commandType: CommandType.Text
-            );
-            return data.ToList();
+            try
+            {
+                await using var connection = await (_dataSourceBuilder.Build()).OpenConnectionAsync();
+                var data = await connection.QueryAsync<RealTimeFeed>(
+                @"select * from get_all_realtime_feeds()",
+                    commandType: CommandType.Text
+                );
+                return data.ToList();
+            }
+            catch (NpgsqlException exception)
+            {
+                _logger.LogError(exception, "Failed to lookup realtime feeds");
+                return new List<RealTimeFeed>();
+            }
         }
 
         private async Task FeedImport(RealTimeFeed feed)
