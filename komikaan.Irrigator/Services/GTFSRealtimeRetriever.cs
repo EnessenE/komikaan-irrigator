@@ -99,6 +99,10 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError(exception, "Database failure while importing");
             }
+            catch (IOException exception)
+            {
+                _logger.LogError(exception, "Failure while trying to process the file");
+            }
         }
 
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
@@ -198,7 +202,7 @@ namespace komikaan.Irrigator.Services
                         DepartureDelay = update.Departure?.Delay,
                         DepartureTime = GetTime(update.Departure?.Time),
                         DepartureUncertainty = update.Departure?.Uncertainty,
-                        ScheduleRelationship = update.schedule_relationship.ToString()
+                        ScheduleRelationship = update.schedule_relationship.ToString(),
                     }).ToArray();
                     stopTimeUpdates.AddRange(updatesArray);
                 }
@@ -293,7 +297,6 @@ namespace komikaan.Irrigator.Services
                     measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
                     congestion_level = vehiclePosition.Item2.congestion_level.ToString(),
                     occupancy_status = vehiclePosition.Item2.occupancy_status.ToString(),
-                    occupancy_percentage = null
                 };
             }).ToArray();
             items.AddRange(positionArray);
