@@ -7,9 +7,8 @@ using TransitRealtime;
 using komikaan.Irrigator.Extensions;
 using static Dapper.SqlMapper;
 using komikaan.Irrigator.Models;
-using System.Net;
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using ProtoBuf.WellKnownTypes;
+using System;
+using static TransitRealtime.TranslatedString;
 
 namespace komikaan.Irrigator.Services
 {
@@ -32,6 +31,7 @@ namespace komikaan.Irrigator.Services
             _config = config;
             _dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
             _dataSourceBuilder.MapComposite<PsqlTripUpdate>("trip_update_type");
+            _dataSourceBuilder.MapComposite<PsqlAlertUpdate>("alert_update");
             _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
             _dataSourceBuilder.MapComposite<PsqlPositionUpdate>("position_entity_type");
             _dataSource = _dataSourceBuilder.Build();
@@ -103,6 +103,10 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError(exception, "Failure while trying to process the file");
             }
+            catch (TaskCanceledException exception)
+            {
+                _logger.LogError(exception, "Failure while trying to process the file");
+            }
         }
 
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
@@ -144,12 +148,20 @@ namespace komikaan.Irrigator.Services
 
                 await DetectTripUpdate(feed, feedMessage, dbConnection);
                 await DetectVehicleUpdate(feed, feedMessage, dbConnection);
+                await DetectAlertUpdate(feed, feedMessage, dbConnection);
 
                 await dbConnection.CloseAsync();
             }
             else
             {
                 _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
+            }
+        }
+        private async Task DetectAlertUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
+        {
+            if (feed.Entities.Any(x => x.Alert != null))
+            {
+                await ProcessAlertUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
             }
         }
 
@@ -262,6 +274,93 @@ namespace komikaan.Irrigator.Services
 
             _logger.LogInformation("Finished inserting trip updates");
         }
+        private async Task ProcessAlertUpdateAsync(RealTimeFeed feed, NpgsqlConnection dbConnection, IEnumerable<FeedEntity> alertUpdates)
+        {
+            _logger.LogInformation("Inserting alert updates");
+            using var transaction = await dbConnection.BeginTransactionAsync();
+
+            // Map FeedEntity to PsqlAlertUpdate
+            var updatesArray = alertUpdates.Select(tripUpdate => new PsqlAlertUpdate
+            {
+                Id = tripUpdate.Id,
+                DataOrigin = feed.SupplierConfigurationName,
+                InternalId = Guid.NewGuid(),
+                LastUpdated = DateTimeOffset.UtcNow,
+                Effect = (tripUpdate.Alert?.effect ?? Alert.Effect.UnknownEffect).ToString(),
+                Cause = (tripUpdate.Alert?.cause ?? Alert.Cause.UnknownCause).ToString(),
+                SeverityLevel = (tripUpdate.Alert?.severity_level ?? Alert.SeverityLevel.UnknownSeverity).ToString(),
+                Url = tripUpdate.Alert?.Url?.ToString(),
+                HeaderText = tripUpdate.Alert?.HeaderText?.Translations?.FirstOrDefault()?.Text?.ToString(),
+                DescriptionText = tripUpdate.Alert?.DescriptionText?.Translations?.FirstOrDefault()?.Text?.ToString()
+            }).ToArray();
+
+            // Insert PsqlAlertUpdate array using a stored procedure
+            var alertUpdateCommand = new NpgsqlCommand("CALL public.upsert_alert_update_array(@updates)", dbConnection)
+            {
+                CommandType = CommandType.Text,
+                Transaction = transaction
+            };
+
+            var alertUpdateParam = alertUpdateCommand.Parameters.AddWithValue("@updates", updatesArray);
+            //alertUpdateParam.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Composite;
+
+            await alertUpdateCommand.ExecuteNonQueryAsync();
+
+            // Insert active periods for each alert
+            var activePeriodInserts = new List<PsqlActivePeriod>();
+            foreach (var tripUpdate in alertUpdates)
+            {
+                if (tripUpdate.Alert?.ActivePeriods?.Count > 0)
+                {
+                    foreach (var period in tripUpdate.Alert.ActivePeriods)
+                    {
+                        activePeriodInserts.Add(new PsqlActivePeriod
+                        {
+                            alert_internal_id = updatesArray.First(u => u.Id == tripUpdate.Id).InternalId,
+                            data_origin = feed.SupplierConfigurationName,
+                            start_time = GetTime((long?)period.Start),
+                            end_time = GetTime((long?)period.End)
+                        });
+                    }
+                }
+            }
+
+            // Insert active periods into alert_active_periods table
+            if (activePeriodInserts.Any())
+            {
+                var activePeriodCommand = new NpgsqlCommand(
+                    "INSERT INTO public.alert_active_periods (alert_internal_id, data_origin, start_time, end_time, data_origin) VALUES (@alert_internal_id, @data_origin, @start_time, @end_time, @data_origin)",
+                    dbConnection)
+                {
+                    Transaction = transaction
+                };
+
+                foreach (var ap in activePeriodInserts)
+                {
+                    activePeriodCommand.Parameters.Clear();
+                    activePeriodCommand.Parameters.AddWithValue("@alert_internal_id", ap.alert_internal_id);
+                    activePeriodCommand.Parameters.AddWithValue("@data_origin", ap.data_origin);
+                    activePeriodCommand.Parameters.AddWithValue("@start_time", ap.start_time.HasValue ? (object)ap.start_time.Value : DBNull.Value);
+                    activePeriodCommand.Parameters.AddWithValue("@end_time", ap.end_time.HasValue ? (object)ap.end_time.Value : DBNull.Value);
+                    activePeriodCommand.Parameters.AddWithValue("@data_origin", feed.SupplierConfigurationName);
+
+                    await activePeriodCommand.ExecuteNonQueryAsync();
+                }
+            }
+
+            // Process informed entities
+            var entities = alertUpdates.Where(tripUpdate => tripUpdate.Alert != null && tripUpdate.Alert.InformedEntities != null).SelectMany(tripUpdate => tripUpdate.Alert.InformedEntities).ToList();
+            var removed = entities.RemoveAll(entity => entity == null);
+            _logger.LogInformation("Removed {count} informed empty alert entities", removed);
+            foreach (var chunk in entities.Chunk(500))
+            {
+                await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
+            }
+
+            await transaction.CommitAsync();
+            _logger.LogInformation("Finished inserting trip updates, active periods, and informed entities");
+        }
+
 
 
 
