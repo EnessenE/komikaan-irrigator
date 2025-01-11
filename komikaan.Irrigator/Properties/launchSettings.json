@@ -12,10 +12,10 @@
     },
     "https": {
       "commandName": "Project",
-      "launchBrowser": false,
       "launchUrl": "swagger",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__gtfs": "Host=vmi1951525.contaboserver.net;Database=gtfs_core;Username=postgres;Password=tZVue5TzK5NqGGEBoDXC2DgVMKk8dtkSj3uN7E9NuYwZdYKwPgSNanYaHexqZfT4;SearchPath=public"
       },
       "dotnetRunMessages": true,
       "applicationUrl": "https://localhost:3452;http://localhost:2312"

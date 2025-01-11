@@ -1,13 +1,22 @@
-﻿namespace komikaan.Irrigator.Models
+﻿using TransitRealtime;
+
+namespace komikaan.Irrigator.Models
 {
     internal class PsqlAlertUpdate
     {
-        public string data_origin { get; set; }
-        public Guid internal_id { get; set; }
-        public DateTimeOffset last_updated { get; set; }
-        public object agency_id { get; set; }
-        public object route_id { get; set; }
-        public object trip_id { get; set; }
-        public object stop_id { get; set; }
+        public string DataOrigin { get; set; }
+        public string Id { get; set; }
+        public Guid InternalId { get; set; }
+        public DateTimeOffset LastUpdated { get; set; }
+        public string? AgencyId { get; set; }
+        public string? RouteID { get; set; }
+        public string? TripId { get; set; }
+        public string? StopId { get; set; }
+        public string? Effect { get; internal set; }
+        public string? Cause { get; internal set; }
+        public string? SeverityLevel { get; internal set; }
+        public string? Url { get; internal set; }
+        public string? HeaderText { get; internal set; }
+        public string? DescriptionText { get; internal set; }
     }
 }
