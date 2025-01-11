@@ -107,6 +107,10 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError(exception, "Failure while trying to process the file");
             }
+            catch(ProtoException protoException)
+            {
+                _logger.LogError(protoException, "Failed to parse file, a corrupted file may have been processed");
+            }
         }
 
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
