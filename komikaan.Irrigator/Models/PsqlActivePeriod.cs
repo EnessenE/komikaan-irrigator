@@ -1,5 +1,4 @@
-﻿
-namespace komikaan.Irrigator.Services
+﻿namespace komikaan.Irrigator.Models
 {
     internal class PsqlActivePeriod
     {
