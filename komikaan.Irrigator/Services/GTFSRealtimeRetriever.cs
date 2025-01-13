@@ -111,6 +111,10 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError(protoException, "Failed to parse file, a corrupted file may have been processed");
             }
+            catch (OverflowException overflowException)
+            {
+                _logger.LogError(overflowException, "Failed to parse file, a corrupted file may have been processed");
+            }
         }
 
         private async Task<List<RealTimeFeed>> GetFeedsAsync()
@@ -137,7 +141,16 @@ namespace komikaan.Irrigator.Services
             //TODO: Actually scale this in all directions
             //TODO: what is this mess i made
 
-            var response = await _httpClient.GetAsync(feed.Url);
+            var request = new HttpRequestMessage(HttpMethod.Get, feed.Url);
+
+            if (!string.IsNullOrWhiteSpace(feed.Header))
+            {
+                request.Headers.Add(feed.Header, feed.HeaderSecret);
+                _logger.LogInformation("Added header {name} to the request", feed.Header);
+            }
+
+            var response = await _httpClient.SendAsync(request);
+
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("Downloaded pb.");
@@ -185,7 +198,7 @@ namespace komikaan.Irrigator.Services
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
-                var vehiclePositonsToUpdate = feed.Entities.Select(x => new Tuple<FeedEntity, VehiclePosition>(x, x.Vehicle)).ToList();
+                var vehiclePositonsToUpdate = feed.Entities.Where(entity=> entity.Vehicle != null).Select(entity => new Tuple<FeedEntity, VehiclePosition>(entity, entity.Vehicle)).ToList();
                 _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
@@ -333,7 +346,7 @@ namespace komikaan.Irrigator.Services
             if (activePeriodInserts.Any())
             {
                 var activePeriodCommand = new NpgsqlCommand(
-                    "INSERT INTO public.alert_active_periods (alert_internal_id, data_origin, start_time, end_time, data_origin) VALUES (@alert_internal_id, @data_origin, @start_time, @end_time, @data_origin)",
+                    "INSERT INTO public.alert_active_periods (alert_internal_id, data_origin, start_time, end_time) VALUES (@alert_internal_id, @data_origin, @start_time, @end_time)",
                     dbConnection)
                 {
                     Transaction = transaction
@@ -346,7 +359,6 @@ namespace komikaan.Irrigator.Services
                     activePeriodCommand.Parameters.AddWithValue("@data_origin", ap.data_origin);
                     activePeriodCommand.Parameters.AddWithValue("@start_time", ap.start_time.HasValue ? (object)ap.start_time.Value : DBNull.Value);
                     activePeriodCommand.Parameters.AddWithValue("@end_time", ap.end_time.HasValue ? (object)ap.end_time.Value : DBNull.Value);
-                    activePeriodCommand.Parameters.AddWithValue("@data_origin", feed.SupplierConfigurationName);
 
                     await activePeriodCommand.ExecuteNonQueryAsync();
                 }
@@ -356,10 +368,10 @@ namespace komikaan.Irrigator.Services
             var entities = alertUpdates.Where(tripUpdate => tripUpdate.Alert != null && tripUpdate.Alert.InformedEntities != null).SelectMany(tripUpdate => tripUpdate.Alert.InformedEntities).ToList();
             var removed = entities.RemoveAll(entity => entity == null);
             _logger.LogInformation("Removed {count} informed empty alert entities", removed);
-            foreach (var chunk in entities.Chunk(500))
-            {
-                await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
-            }
+            //foreach (var chunk in entities.Chunk(500))
+            //{
+            //    await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
+            //}
 
             await transaction.CommitAsync();
             _logger.LogInformation("Finished inserting trip updates, active periods, and informed entities");
