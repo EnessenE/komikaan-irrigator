@@ -159,6 +159,7 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Entities: {cnt}", feedMessage.Entities.Count);
                 _logger.LogInformation("Alert: {cnt}", feedMessage.Entities.Where(entity => entity.Alert != null).Count());
                 _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(entity => entity.Vehicle != null).Count());
+                _logger.LogInformation("TripUpdates: {cnt}", feedMessage.Entities.Where(entity => entity.TripUpdate != null).Count());
 
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
