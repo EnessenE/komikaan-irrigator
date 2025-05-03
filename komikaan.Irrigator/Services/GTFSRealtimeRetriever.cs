@@ -51,6 +51,10 @@ namespace komikaan.Irrigator.Services
 
                     foreach (var feed in realtimeFeeds)
                     {
+                        if (stoppingToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
                         using (_logger.BeginScope(feed.SupplierConfigurationName))
                         {
                             if (feed.Enabled)
@@ -107,7 +111,7 @@ namespace komikaan.Irrigator.Services
             {
                 _logger.LogError(exception, "Failure while trying to process the file");
             }
-            catch(ProtoException protoException)
+            catch (ProtoException protoException)
             {
                 _logger.LogError(protoException, "Failed to parse file, a corrupted file may have been processed");
             }
@@ -164,6 +168,8 @@ namespace komikaan.Irrigator.Services
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
 
+                LogThings(feedMessage);
+
                 await DetectTripUpdate(feed, feedMessage, dbConnection);
                 await DetectVehicleUpdate(feed, feedMessage, dbConnection);
                 await DetectAlertUpdate(feed, feedMessage, dbConnection);
@@ -175,6 +181,22 @@ namespace komikaan.Irrigator.Services
                 _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
             }
         }
+
+        private void LogThings(FeedMessage feedMessage)
+        {
+            foreach (var item in feedMessage.Entities)
+            {
+                if (item.TripUpdate != null && item.TripUpdate?.Vehicle != null)
+                {
+                    _logger.LogInformation("TRIP VehicleDesc: {license} {label}", item.TripUpdate?.Vehicle?.LicensePlate, item.TripUpdate?.Vehicle?.Label);
+                }
+                if (item.Vehicle != null && item.Vehicle?.Vehicle != null)
+                {
+                    _logger.LogInformation("VEHICLE VehicleDesc: {license} {label}", item.Vehicle?.Vehicle?.LicensePlate, item.Vehicle?.Vehicle?.Label);
+                }
+            }
+        }
+
         private async Task DetectAlertUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
         {
             if (feed.Entities.Any(x => x.Alert != null))
@@ -199,7 +221,7 @@ namespace komikaan.Irrigator.Services
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
-                var vehiclePositonsToUpdate = feed.Entities.Where(entity=> entity.Vehicle != null).Select(entity => new Tuple<FeedEntity, VehiclePosition>(entity, entity.Vehicle)).ToList();
+                var vehiclePositonsToUpdate = feed.Entities.Where(entity => entity.Vehicle != null).Select(entity => new Tuple<FeedEntity, VehiclePosition>(entity, entity.Vehicle)).ToList();
                 _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
