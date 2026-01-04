@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+[0.4.0]
+### Added
+- Proper support for alerts entities
+### Changed
+- Remove bloated
+- Changed to Komikaan.GTFS instead of gtfsrealtimebindings
+- Refactored some code
+- Remove GUID internal IDs for some entities
+
 [0.3.14]
 ### Added
 - Log important things

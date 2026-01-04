@@ -3,12 +3,11 @@ using Npgsql;
 using ProtoBuf;
 using System.Data;
 using System.Diagnostics;
-using TransitRealtime;
 using komikaan.Irrigator.Extensions;
 using static Dapper.SqlMapper;
 using komikaan.Irrigator.Models;
-using System;
-using static TransitRealtime.TranslatedString;
+using komikaan.GTFS.Models.RealTime.Models;
+using komikaan.GTFS.Models.RealTime.Enums;
 
 namespace komikaan.Irrigator.Services
 {
@@ -23,7 +22,7 @@ namespace komikaan.Irrigator.Services
 
         public GTFSRealtimeRetriever(ILogger<GTFSRealtimeRetriever> logger, IConfiguration config, HttpClient httpClient)
         {
-            Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
+            DefaultTypeMap.MatchNamesWithUnderscores = true;
 
             _logger = logger;
             _connectionString = config.GetConnectionString("gtfs");
@@ -34,6 +33,7 @@ namespace komikaan.Irrigator.Services
             _dataSourceBuilder.MapComposite<PsqlAlertUpdate>("alert_update");
             _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
             _dataSourceBuilder.MapComposite<PsqlPositionUpdate>("position_entity_type");
+            _dataSourceBuilder.MapComposite<PsqlAlertEntity>("alert_entity_type");
             _dataSource = _dataSourceBuilder.Build();
 
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "irrigator/reasulus.nl");
@@ -161,14 +161,14 @@ namespace komikaan.Irrigator.Services
                 FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
                 _logger.LogInformation("Parsed pb.");
                 _logger.LogInformation("Entities: {cnt}", feedMessage.Entities.Count);
-                _logger.LogInformation("Alert: {cnt}", feedMessage.Entities.Where(entity => entity.Alert != null).Count());
-                _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(entity => entity.Vehicle != null).Count());
-                _logger.LogInformation("TripUpdates: {cnt}", feedMessage.Entities.Where(entity => entity.TripUpdate != null).Count());
+                _logger.LogInformation("Alert: {cnt}", feedMessage.Entities.Where(Entities => Entities.Alert != null).Count());
+                _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.Vehicle != null).Count());
+                _logger.LogInformation("TripUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.TripUpdate != null).Count());
 
                 var stop = Stopwatch.StartNew();
                 var dbConnection = await _dataSource.OpenConnectionAsync();
 
-                LogThings(feedMessage);
+                //LogThings(feedMessage);
 
                 await DetectTripUpdate(feed, feedMessage, dbConnection);
                 await DetectVehicleUpdate(feed, feedMessage, dbConnection);
@@ -210,7 +210,7 @@ namespace komikaan.Irrigator.Services
             if (feed.Entities.Any(x => x.TripUpdate != null))
             {
                 await ProcessTripUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
-                foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>?>(x, x.TripUpdate?.StopTimeUpdates)).ToList().ChunkBy(500))
+                foreach (var batch in feed.Entities.Select(x => new Tuple<FeedEntity, List<StopTimeUpdate>?>(x, x.TripUpdate?.StopTimeUpdate)).ToList().ChunkBy(500))
                 {
                     await UpdateStopTimeUpdates(realtimeFeed, batch, dbConnection);
                 }
@@ -221,7 +221,7 @@ namespace komikaan.Irrigator.Services
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
-                var vehiclePositonsToUpdate = feed.Entities.Where(entity => entity.Vehicle != null).Select(entity => new Tuple<FeedEntity, VehiclePosition>(entity, entity.Vehicle)).ToList();
+                var vehiclePositonsToUpdate = feed.Entities.Where(Entities => Entities.Vehicle != null).Select(Entities => new Tuple<FeedEntity, VehiclePosition>(Entities, Entities.Vehicle)).ToList();
                 _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
@@ -230,7 +230,7 @@ namespace komikaan.Irrigator.Services
             }
         }
 
-        private async Task UpdateStopTimeUpdates(RealTimeFeed feed, IEnumerable<Tuple<FeedEntity, List<TripUpdate.StopTimeUpdate>?>> updates, NpgsqlConnection dbConnection)
+        private async Task UpdateStopTimeUpdates(RealTimeFeed feed, IEnumerable<Tuple<FeedEntity, List<StopTimeUpdate>?>> updates, NpgsqlConnection dbConnection)
         {
             _logger.LogInformation("Collecting stop time updates data");
             using var transaction = await dbConnection.BeginTransactionAsync();
@@ -242,11 +242,11 @@ namespace komikaan.Irrigator.Services
                 {
                     var updatesArray = tripBundle.Item2.Select(update => new PsqlStopTimeUpdate()
                     {
-                        TripId = tripBundle.Item1.TripUpdate.Trip.TripId,
+                        TripId = tripBundle.Item1.TripUpdate?.Trip.TripId,
                         DataOrigin = feed.SupplierConfigurationName,
-                        InternalId = Guid.NewGuid(),
+                        Id = tripBundle.Item1.Id,
                         LastUpdated = DateTimeOffset.UtcNow,
-                        StopSequence = (int)update.StopSequence,
+                        StopSequence = (int?)update.StopSequence,
                         StopId = update.StopId,
                         ArrivalDelay = update.Arrival?.Delay,
                         ArrivalTime = GetTime(update.Arrival?.Time),
@@ -254,7 +254,7 @@ namespace komikaan.Irrigator.Services
                         DepartureDelay = update.Departure?.Delay,
                         DepartureTime = GetTime(update.Departure?.Time),
                         DepartureUncertainty = update.Departure?.Uncertainty,
-                        ScheduleRelationship = update.schedule_relationship.ToString(),
+                        ScheduleRelationship = update.ScheduleRelationship.ToString(),
                     }).ToArray();
                     stopTimeUpdates.AddRange(updatesArray);
                 }
@@ -326,16 +326,16 @@ namespace komikaan.Irrigator.Services
                 DataOrigin = feed.SupplierConfigurationName,
                 InternalId = Guid.NewGuid(),
                 LastUpdated = DateTimeOffset.UtcNow,
-                Effect = (tripUpdate.Alert?.effect ?? Alert.Effect.UnknownEffect).ToString(),
-                Cause = (tripUpdate.Alert?.cause ?? Alert.Cause.UnknownCause).ToString(),
-                SeverityLevel = (tripUpdate.Alert?.severity_level ?? Alert.SeverityLevel.UnknownSeverity).ToString(),
+                Effect = (tripUpdate.Alert?.Effect ?? Effect.UnknownEffect).ToString(),
+                Cause = (tripUpdate.Alert?.Cause ?? Cause.UnknownCause).ToString(),
+                SeverityLevel = (tripUpdate.Alert?.SeverityLevel ?? SeverityLevel.UnknownSeverity).ToString(),
                 Url = tripUpdate.Alert?.Url?.ToString(),
-                HeaderText = tripUpdate.Alert?.HeaderText?.Translations?.FirstOrDefault()?.Text?.ToString(),
-                DescriptionText = tripUpdate.Alert?.DescriptionText?.Translations?.FirstOrDefault()?.Text?.ToString()
+                HeaderText = tripUpdate.Alert?.HeaderText?.Translation?.FirstOrDefault()?.Text?.ToString(),
+                DescriptionText = tripUpdate.Alert?.DescriptionText?.Translation?.FirstOrDefault()?.Text?.ToString()
             }).ToArray();
 
             // Insert PsqlAlertUpdate array using a stored procedure
-            var alertUpdateCommand = new NpgsqlCommand("CALL public.upsert_alert_update_array(@updates)", dbConnection)
+            var alertUpdateCommand = new NpgsqlCommand("CALL public.upsert_alert_update(@updates)", dbConnection)
             {
                 CommandType = CommandType.Text,
                 Transaction = transaction
@@ -350,13 +350,13 @@ namespace komikaan.Irrigator.Services
             var activePeriodInserts = new List<PsqlActivePeriod>();
             foreach (var tripUpdate in alertUpdates)
             {
-                if (tripUpdate.Alert?.ActivePeriods?.Count > 0)
+                if (tripUpdate.Alert?.ActivePeriod?.Count > 0)
                 {
-                    foreach (var period in tripUpdate.Alert.ActivePeriods)
+                    foreach (var period in tripUpdate.Alert.ActivePeriod)
                     {
                         activePeriodInserts.Add(new PsqlActivePeriod
                         {
-                            alert_internal_id = updatesArray.First(u => u.Id == tripUpdate.Id).InternalId,
+                            id = tripUpdate.Id,
                             data_origin = feed.SupplierConfigurationName,
                             start_time = GetTime((long?)period.Start),
                             end_time = GetTime((long?)period.End)
@@ -369,35 +369,38 @@ namespace komikaan.Irrigator.Services
             if (activePeriodInserts.Any())
             {
                 var activePeriodCommand = new NpgsqlCommand(
-                    "INSERT INTO public.alert_active_periods (alert_internal_id, data_origin, start_time, end_time) VALUES (@alert_internal_id, @data_origin, @start_time, @end_time)",
+                    @"INSERT INTO public.alert_active_periods (id, data_origin, start_time, end_time)
+                      VALUES (@id, @data_origin, @start_time, @end_time)
+                      ON CONFLICT (id, data_origin) DO NOTHING;",
                     dbConnection)
+
                 {
                     Transaction = transaction
                 };
 
-                foreach (var ap in activePeriodInserts)
+                foreach (var alertPeriod in activePeriodInserts)
                 {
                     activePeriodCommand.Parameters.Clear();
-                    activePeriodCommand.Parameters.AddWithValue("@alert_internal_id", ap.alert_internal_id);
-                    activePeriodCommand.Parameters.AddWithValue("@data_origin", ap.data_origin);
-                    activePeriodCommand.Parameters.AddWithValue("@start_time", ap.start_time.HasValue ? (object)ap.start_time.Value : DBNull.Value);
-                    activePeriodCommand.Parameters.AddWithValue("@end_time", ap.end_time.HasValue ? (object)ap.end_time.Value : DBNull.Value);
+                    activePeriodCommand.Parameters.AddWithValue("@id", alertPeriod.id);
+                    activePeriodCommand.Parameters.AddWithValue("@data_origin", alertPeriod.data_origin);
+                    activePeriodCommand.Parameters.AddWithValue("@start_time", alertPeriod.start_time.HasValue ? (object)alertPeriod.start_time.Value : DBNull.Value);
+                    activePeriodCommand.Parameters.AddWithValue("@end_time", alertPeriod.end_time.HasValue ? (object)alertPeriod.end_time.Value : DBNull.Value);
 
                     await activePeriodCommand.ExecuteNonQueryAsync();
                 }
             }
 
-            // Process informed entities
-            var entities = alertUpdates.Where(tripUpdate => tripUpdate.Alert != null && tripUpdate.Alert.InformedEntities != null).SelectMany(tripUpdate => tripUpdate.Alert.InformedEntities).ToList();
-            var removed = entities.RemoveAll(entity => entity == null);
-            _logger.LogInformation("Removed {count} informed empty alert entities", removed);
-            //foreach (var chunk in entities.Chunk(500))
-            //{
-            //    await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
-            //}
+            // Process informed Entities
+            var removed = alertUpdates.ToList().RemoveAll(entity => entity.Alert == null);
+            _logger.LogInformation("Removed {count} informed empty alert Entities, saving new ones", removed);
+            foreach (var chunk in alertUpdates.Chunk(500))
+            {
+                await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
+                _logger.LogInformation("Processed new {Entities} alerts", chunk.Count());
+            }
 
             await transaction.CommitAsync();
-            _logger.LogInformation("Finished inserting trip updates, active periods, and informed entities");
+            _logger.LogInformation("Finished inserting trip updates, active periods, and informed Entities");
         }
 
 
@@ -425,7 +428,6 @@ namespace komikaan.Irrigator.Services
                 {
                     id = vehiclePosition.Item1.Id,
                     data_origin = feed.SupplierConfigurationName,
-                    internal_id = Guid.NewGuid(),
                     last_updated = DateTimeOffset.UtcNow,
                     trip_id = vehiclePosition.Item2.Trip?.TripId,
                     latitude = latitude,
@@ -433,8 +435,8 @@ namespace komikaan.Irrigator.Services
                     stop_id = string.IsNullOrWhiteSpace(vehiclePosition.Item2.StopId) ? null : vehiclePosition.Item2.StopId,
                     current_status = vehiclePosition.Item2.CurrentStatus.ToString(),
                     measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
-                    congestion_level = vehiclePosition.Item2.congestion_level.ToString(),
-                    occupancy_status = vehiclePosition.Item2.occupancy_status.ToString(),
+                    congestion_level = vehiclePosition.Item2.CongestionLevel?.ToString() ?? CongestionLevel.UnknownCongestionLevel.ToString(),
+                    occupancy_status = vehiclePosition.Item2.OccupancyStatus?.ToString() ?? OccupancyStatus.NoDataAvailable.ToString(),
                 };
             }).ToArray();
             items.AddRange(positionArray);
@@ -457,28 +459,38 @@ namespace komikaan.Irrigator.Services
         }
 
 
-        private async Task InformEntitiesAsync(RealTimeFeed feed, List<EntitySelector> informedEntities, NpgsqlConnection dbConnection)
+        private async Task InformEntitiesAsync(RealTimeFeed feed, List<FeedEntity> feedEntities, NpgsqlConnection dbConnection)
         {
-            //Todo: batching
-            _logger.LogInformation("entities to inform: {cnt}", informedEntities.Count);
-            foreach (EntitySelector entity in informedEntities)
-            {
+            var tvpRows = new List<PsqlAlertEntity>();
 
-                await dbConnection.ExecuteAsync(
-                    @"CALL public.upsert_alert_entities(@data_origin, @internal_id, @last_updated, @agency_id, @route_id, @trip_id, @stop_id)",
-                    new
+            foreach (var feedMessage in feedEntities)
+            {
+                if (feedMessage.Alert?.InformedEntity == null)
+                    continue;
+
+                foreach (var alertEntity in feedMessage.Alert.InformedEntity)
+                {
+                    tvpRows.Add(new PsqlAlertEntity
                     {
                         data_origin = feed.SupplierConfigurationName,
-                        internal_id = Guid.NewGuid(),
+                        id = feedMessage.Id,
                         last_updated = DateTimeOffset.UtcNow,
-                        agency_id = !string.IsNullOrWhiteSpace(entity.AgencyId) ? entity.AgencyId : null,
-                        route_id = !string.IsNullOrWhiteSpace(entity.RouteId) ? entity.RouteId : null,
-                        trip_id = entity.Trip?.TripId,
-                        stop_id = !string.IsNullOrWhiteSpace(entity.StopId) ? entity.StopId : null
-                    },
-                    commandType: CommandType.Text
-                );
+                        agency_id = !string.IsNullOrWhiteSpace(alertEntity.AgencyId) ? alertEntity.AgencyId : null,
+                        route_id = !string.IsNullOrWhiteSpace(alertEntity.RouteId) ? alertEntity.RouteId : null,
+                        trip_id = alertEntity.Trip?.TripId,
+                        stop_id = !string.IsNullOrWhiteSpace(alertEntity.StopId) ? alertEntity.StopId : null
+                    });
+                }
             }
+
+            if (!tvpRows.Any())
+                return;
+
+            await dbConnection.ExecuteAsync(
+                "CALL public.upsert_alert_entities(@Entities_input)",
+                new { Entities_input = tvpRows.ToArray() },
+                commandType: CommandType.Text
+            );
         }
 
         private Guid GetActivePeriod(List<TimeRange> activePeriods)

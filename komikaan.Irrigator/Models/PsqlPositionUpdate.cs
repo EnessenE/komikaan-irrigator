@@ -5,7 +5,6 @@
         public string id { get; set; }
 
         public string data_origin { get; set; }
-        public Guid internal_id { get; set; }
         public DateTimeOffset last_updated { get; set; }
         public string? trip_id { get; set; }
         public double? latitude { get; set; }

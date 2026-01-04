@@ -1,6 +1,4 @@
-﻿using TransitRealtime;
-
-namespace komikaan.Irrigator.Models
+﻿namespace komikaan.Irrigator.Models
 {
     internal class PsqlAlertUpdate
     {
