@@ -34,6 +34,7 @@ namespace komikaan.Irrigator.Services
             _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
             _dataSourceBuilder.MapComposite<PsqlPositionUpdate>("position_entity_type");
             _dataSourceBuilder.MapComposite<PsqlAlertEntity>("alert_entity_type");
+
             _dataSource = _dataSourceBuilder.Build();
 
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "irrigator/reasulus.nl");
@@ -298,10 +299,15 @@ namespace komikaan.Irrigator.Services
                 InternalId = Guid.NewGuid(),
                 LastUpdated = DateTimeOffset.UtcNow,
                 Delay = tripUpdate.TripUpdate?.Delay,
-                MeasurementTime = tripUpdate.TripUpdate?.Timestamp.ToDateTime()
+                MeasurementTime = tripUpdate.TripUpdate?.Timestamp.ToDateTime(),
+                ScheduleRelationShip = tripUpdate.TripUpdate?.Trip?.ScheduleRelationship.ToString(),
+                VehicleId = tripUpdate.TripUpdate?.Vehicle?.Id,
+                VehicleLabel = tripUpdate.TripUpdate?.Vehicle?.Label,
+                VehicleLicensePlate = tripUpdate.TripUpdate?.Vehicle?.LicensePlate,
+                VehicleWheelchairAccessible = tripUpdate.TripUpdate?.Vehicle?.WheelchairAccessible.ToString()
             }).ToArray();
 
-            var command = new NpgsqlCommand("CALL public.upsert_trip_update_array(@updates)", dbConnection)
+            var command = new NpgsqlCommand("CALL public.upsert_trip_updates(@updates)", dbConnection)
             {
                 CommandType = CommandType.Text,
                 Transaction = transaction
@@ -331,7 +337,8 @@ namespace komikaan.Irrigator.Services
                 SeverityLevel = (tripUpdate.Alert?.SeverityLevel ?? SeverityLevel.UnknownSeverity).ToString(),
                 Url = tripUpdate.Alert?.Url?.ToString(),
                 HeaderText = tripUpdate.Alert?.HeaderText?.Translation?.FirstOrDefault()?.Text?.ToString(),
-                DescriptionText = tripUpdate.Alert?.DescriptionText?.Translation?.FirstOrDefault()?.Text?.ToString()
+                DescriptionText = tripUpdate.Alert?.DescriptionText?.Translation?.FirstOrDefault()?.Text?.ToString(),
+
             }).ToArray();
 
             // Insert PsqlAlertUpdate array using a stored procedure
