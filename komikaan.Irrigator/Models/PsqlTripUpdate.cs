@@ -20,19 +20,19 @@ namespace komikaan.Irrigator.Models
         public int? Delay { get; set; }
 
         [PgName("schedule_relationship")]
-        public string ScheduleRelationShip { get; set; }
+        public string? ScheduleRelationShip { get; set; }
 
         [PgName("vehicle_id")]
-        public string VehicleId { get; set; }
+        public string? VehicleId { get; set; }
 
         [PgName("vehicle_label")]
-        public string VehicleLabel { get; set; }
+        public string? VehicleLabel { get; set; }
 
         [PgName("vehicle_license_plate")]
-        public string VehicleLicensePlate { get; set; }
+        public string? VehicleLicensePlate { get; set; }
 
         [PgName("vehicle_wheelchair_accessible")]
-        public string VehicleWheelchairAccessible { get; set; }
+        public string? VehicleWheelchairAccessible { get; set; }
 
         [PgName("measurement_time")]
         public DateTimeOffset? MeasurementTime { get; set; }

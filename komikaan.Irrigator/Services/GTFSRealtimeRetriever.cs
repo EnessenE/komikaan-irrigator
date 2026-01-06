@@ -291,7 +291,6 @@ namespace komikaan.Irrigator.Services
         {
             _logger.LogInformation("Inserting trip updates");
             using var transaction = await dbConnection.BeginTransactionAsync();
-
             var updatesArray = tripUpdates.Select(tripUpdate => new PsqlTripUpdate
             {
                 Id = tripUpdate.Id,
@@ -380,7 +379,6 @@ namespace komikaan.Irrigator.Services
                       VALUES (@id, @data_origin, @start_time, @end_time)
                       ON CONFLICT (id, data_origin) DO NOTHING;",
                     dbConnection)
-
                 {
                     Transaction = transaction
                 };
@@ -398,9 +396,7 @@ namespace komikaan.Irrigator.Services
             }
 
             // Process informed Entities
-            var removed = alertUpdates.ToList().RemoveAll(entity => entity.Alert == null);
-            _logger.LogInformation("Removed {count} informed empty alert Entities, saving new ones", removed);
-            foreach (var chunk in alertUpdates.Chunk(500))
+            foreach (var chunk in alertUpdates.ToList().FindAll(entity => entity.Alert != null).Chunk(500))
             {
                 await InformEntitiesAsync(feed, chunk.ToList(), dbConnection);
                 _logger.LogInformation("Processed new {Entities} alerts", chunk.Count());
