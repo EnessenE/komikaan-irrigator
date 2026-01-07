@@ -294,6 +294,7 @@ namespace komikaan.Irrigator.Services
             var updatesArray = tripUpdates.Select(tripUpdate => new PsqlTripUpdate
             {
                 Id = tripUpdate.Id,
+                TripId = tripUpdate?.TripUpdate?.Trip?.TripId,
                 DataOrigin = feed.SupplierConfigurationName,
                 InternalId = Guid.NewGuid(),
                 LastUpdated = DateTimeOffset.UtcNow,

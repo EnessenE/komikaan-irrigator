@@ -13,6 +13,9 @@ namespace komikaan.Irrigator.Models
         [PgName("id")]
         public string Id { get; set; }
 
+        [PgName("trip_id")]
+        public string? TripId { get; set; }
+
         [PgName("last_updated")]
         public DateTimeOffset LastUpdated { get; set; }
 
