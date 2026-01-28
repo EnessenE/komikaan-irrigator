@@ -166,16 +166,26 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.Vehicle != null).Count());
                 _logger.LogInformation("TripUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.TripUpdate != null).Count());
 
-                var stop = Stopwatch.StartNew();
-                var dbConnection = await _dataSource.OpenConnectionAsync();
+                NpgsqlConnection dbConnection = await _dataSource.OpenConnectionAsync();
+                try
+                {
+                    var stop = Stopwatch.StartNew();
 
-                //LogThings(feedMessage);
+                    //LogThings(feedMessage);
 
-                await DetectTripUpdate(feed, feedMessage, dbConnection);
-                await DetectVehicleUpdate(feed, feedMessage, dbConnection);
-                await DetectAlertUpdate(feed, feedMessage, dbConnection);
+                    await DetectTripUpdate(feed, feedMessage, dbConnection);
+                    await DetectVehicleUpdate(feed, feedMessage, dbConnection);
+                    await DetectAlertUpdate(feed, feedMessage, dbConnection);
 
-                await dbConnection.CloseAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to process feed");
+                }
+                finally
+                {
+                    await dbConnection?.CloseAsync();
+                }
             }
             else
             {
