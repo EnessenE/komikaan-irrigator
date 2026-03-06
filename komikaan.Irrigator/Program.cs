@@ -1,5 +1,6 @@
 using System.Reflection;
 using komikaan.Irrigator.Services;
+using OpenTelemetry.Metrics;
 using Serilog;
 
 namespace komikaan.Irrigator
@@ -30,6 +31,16 @@ namespace komikaan.Irrigator
             builder.Services.AddSwaggerGen();
             builder.Services.AddHttpClient();
 
+            // Configure OpenTelemetry metrics
+            builder.Services.AddOpenTelemetry()
+                .WithMetrics(metrics =>
+                {
+                    metrics
+                        .AddPrometheusExporter()
+                        .AddMeter("komikaan.Irrigator")
+                        .AddAspNetCoreInstrumentation()
+                        .AddHttpClientInstrumentation();
+                });
 
             AddSuppliers(builder.Services);
 
@@ -51,6 +62,7 @@ namespace komikaan.Irrigator
             app.UseAuthorization();
             app.UseSerilogRequestLogging();
 
+            app.MapPrometheusScrapingEndpoint();
             app.MapControllers();
             app.UseHealthChecks("/health");
 

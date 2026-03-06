@@ -49,6 +49,7 @@ namespace komikaan.Irrigator.Services
                 {
                     var realtimeFeeds = await GetFeedsAsync();
                     _logger.LogInformation("Starting a process cycle for {amount} feeds", realtimeFeeds.Count);
+                    MetricsService.ActiveFeedsCounter.Add(realtimeFeeds.Count);
 
                     foreach (var feed in realtimeFeeds)
                     {
@@ -70,6 +71,7 @@ namespace komikaan.Irrigator.Services
 
                         }
                     }
+                    MetricsService.ActiveFeedsCounter.Add(-realtimeFeeds.Count);
                     _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
                     await Task.Delay(interval, stoppingToken);
                 }
@@ -154,17 +156,34 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Added header {name} to the request", feed.Header);
             }
 
+            var downloadStopwatch = Stopwatch.StartNew();
             var response = await _httpClient.SendAsync(request);
+            downloadStopwatch.Stop();
 
             if (response.IsSuccessStatusCode)
             {
+                var tags = new[] { new KeyValuePair<string, object?>("feed", feed.SupplierConfigurationName) };
+                MetricsService.FeedDownloadCounter.Add(1, tags);
+                MetricsService.FeedDownloadDurationMs.Record(downloadStopwatch.ElapsedMilliseconds, tags);
+
                 _logger.LogInformation("Downloaded pb.");
                 FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
                 _logger.LogInformation("Parsed pb.");
+
+                var alertCount = feedMessage.Entities.Count(x => x.Alert != null);
+                var vehicleCount = feedMessage.Entities.Count(x => x.Vehicle != null);
+                var tripCount = feedMessage.Entities.Count(x => x.TripUpdate != null);
+
                 _logger.LogInformation("Entities: {cnt}", feedMessage.Entities.Count);
-                _logger.LogInformation("Alert: {cnt}", feedMessage.Entities.Where(Entities => Entities.Alert != null).Count());
-                _logger.LogInformation("VehicleUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.Vehicle != null).Count());
-                _logger.LogInformation("TripUpdates: {cnt}", feedMessage.Entities.Where(Entities => Entities.TripUpdate != null).Count());
+                _logger.LogInformation("Alert: {cnt}", alertCount);
+                _logger.LogInformation("VehicleUpdates: {cnt}", vehicleCount);
+                _logger.LogInformation("TripUpdates: {cnt}", tripCount);
+
+                // Record entity metrics
+                MetricsService.EntitiesProcessedCounter.Add(feedMessage.Entities.Count, tags);
+                MetricsService.AlertsCounter.Add(alertCount, tags);
+                MetricsService.VehicleUpdatesCounter.Add(vehicleCount, tags);
+                MetricsService.TripUpdatesCounter.Add(tripCount, tags);
 
                 NpgsqlConnection dbConnection = await _dataSource.OpenConnectionAsync();
                 try
@@ -189,6 +208,8 @@ namespace komikaan.Irrigator.Services
             }
             else
             {
+                var tags = new[] { new KeyValuePair<string, object?>("feed", feed.SupplierConfigurationName) };
+                MetricsService.FeedDownloadFailureCounter.Add(1, tags);
                 _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
             }
         }
