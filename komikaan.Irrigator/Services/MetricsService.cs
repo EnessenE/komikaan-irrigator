@@ -14,6 +14,11 @@ namespace komikaan.Irrigator.Services
             name: "gtfs_feed_downloads_total",
             unit: "{downloads}",
             description: "Total number of successful GTFS feed downloads");
+        
+        public static readonly Counter<int> MissingIDsCounter = _meter.CreateCounter<int>(
+            name: "gtfs_feed_id_missing_total",
+            unit: "{entities}",
+            description: "Total number of feed ID's that are missing");
 
         public static readonly Counter<int> FeedDownloadFailureCounter = _meter.CreateCounter<int>(
             name: "gtfs_feed_download_failures_total",
@@ -46,6 +51,18 @@ namespace komikaan.Irrigator.Services
             name: "gtfs_alerts_total",
             unit: "{alerts}",
             description: "Total number of alerts processed");
+
+        // Histogram for tracking processing time
+        public static readonly Histogram<double> FeedProcessingDurationMs = _meter.CreateHistogram<double>(
+            name: "gtfs_feed_processing_duration_ms",
+            unit: "ms",
+            description: "Duration of GTFS feed processing (parsing and database operations) in milliseconds");
+
+        // Histogram for tracking database write latency
+        public static readonly Histogram<double> DbWriteLatencyMs = _meter.CreateHistogram<double>(
+            name: "gtfs_db_write_latency_ms",
+            unit: "ms",
+            description: "Database write latency for feed data in milliseconds");
 
         // Gauge for tracking current process status
         public static readonly UpDownCounter<int> ActiveFeedsCounter = _meter.CreateUpDownCounter<int>(

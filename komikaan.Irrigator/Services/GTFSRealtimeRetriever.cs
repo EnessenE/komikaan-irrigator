@@ -11,10 +11,10 @@ using komikaan.GTFS.Models.RealTime.Enums;
 
 namespace komikaan.Irrigator.Services
 {
+    // This entire class needs a massive refactor
     public class GTFSRealtimeRetriever : BackgroundService
     {
         private readonly ILogger<GTFSRealtimeRetriever> _logger;
-        private readonly string? _connectionString;
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _config;
         private readonly NpgsqlDataSourceBuilder _dataSourceBuilder;
@@ -25,10 +25,9 @@ namespace komikaan.Irrigator.Services
             DefaultTypeMap.MatchNamesWithUnderscores = true;
 
             _logger = logger;
-            _connectionString = config.GetConnectionString("gtfs");
             _httpClient = httpClient;
             _config = config;
-            _dataSourceBuilder = new NpgsqlDataSourceBuilder(_connectionString);
+            _dataSourceBuilder = new NpgsqlDataSourceBuilder(config.GetConnectionString("gtfs"));
             _dataSourceBuilder.MapComposite<PsqlTripUpdate>("trip_update_type");
             _dataSourceBuilder.MapComposite<PsqlAlertUpdate>("alert_update");
             _dataSourceBuilder.MapComposite<PsqlStopTimeUpdate>("trip_update_stop_time_type");
@@ -167,9 +166,15 @@ namespace komikaan.Irrigator.Services
                 MetricsService.FeedDownloadDurationMs.Record(downloadStopwatch.ElapsedMilliseconds, tags);
 
                 _logger.LogInformation("Downloaded pb.");
+                
+                // Start processing timer
+                var processingStopwatch = Stopwatch.StartNew();
                 FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
                 _logger.LogInformation("Parsed pb.");
 
+                var missedIds = feedMessage.Entities.Count(x => x.Id == null);
+                MetricsService.MissingIDsCounter.Add(missedIds, tags);
+                
                 var alertCount = feedMessage.Entities.Count(x => x.Alert != null);
                 var vehicleCount = feedMessage.Entities.Count(x => x.Vehicle != null);
                 var tripCount = feedMessage.Entities.Count(x => x.TripUpdate != null);
@@ -188,7 +193,7 @@ namespace komikaan.Irrigator.Services
                 NpgsqlConnection dbConnection = await _dataSource.OpenConnectionAsync();
                 try
                 {
-                    var stop = Stopwatch.StartNew();
+                    var dbStopwatch = Stopwatch.StartNew();
 
                     //LogThings(feedMessage);
 
@@ -196,6 +201,8 @@ namespace komikaan.Irrigator.Services
                     await DetectVehicleUpdate(feed, feedMessage, dbConnection);
                     await DetectAlertUpdate(feed, feedMessage, dbConnection);
 
+                    dbStopwatch.Stop();
+                    MetricsService.DbWriteLatencyMs.Record(dbStopwatch.ElapsedMilliseconds, tags);
                 }
                 catch (Exception ex)
                 {
@@ -205,6 +212,9 @@ namespace komikaan.Irrigator.Services
                 {
                     await dbConnection?.CloseAsync();
                 }
+
+                processingStopwatch.Stop();
+                MetricsService.FeedProcessingDurationMs.Record(processingStopwatch.ElapsedMilliseconds, tags);
             }
             else
             {
