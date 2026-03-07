@@ -161,7 +161,7 @@ namespace komikaan.Irrigator.Services
 
             if (response.IsSuccessStatusCode)
             {
-                var tags = new[] { new KeyValuePair<string, object?>("feed", feed.SupplierConfigurationName) };
+                var tags = MetricsService.CreateFeedTags(feed);
                 MetricsService.FeedDownloadCounter.Add(1, tags);
                 MetricsService.FeedDownloadDurationMs.Record(downloadStopwatch.ElapsedMilliseconds, tags);
 
@@ -173,7 +173,8 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Parsed pb.");
 
                 var missedIds = feedMessage.Entities.Count(x => x.Id == null);
-                MetricsService.MissingIDsCounter.Add(missedIds, tags);
+                if (missedIds > 0)
+                    MetricsService.MissingIDsCounter.Add(missedIds, tags);
                 
                 var alertCount = feedMessage.Entities.Count(x => x.Alert != null);
                 var vehicleCount = feedMessage.Entities.Count(x => x.Vehicle != null);
@@ -186,9 +187,13 @@ namespace komikaan.Irrigator.Services
 
                 // Record entity metrics
                 MetricsService.EntitiesProcessedCounter.Add(feedMessage.Entities.Count, tags);
-                MetricsService.AlertsCounter.Add(alertCount, tags);
-                MetricsService.VehicleUpdatesCounter.Add(vehicleCount, tags);
-                MetricsService.TripUpdatesCounter.Add(tripCount, tags);
+                    MetricsService.EntitiesProcessedCounter.Add(feedMessage.Entities.Count, tags);
+                if (alertCount > 0)
+                    MetricsService.AlertsCounter.Add(alertCount, tags);
+                if (vehicleCount > 0)
+                    MetricsService.VehicleUpdatesCounter.Add(vehicleCount, tags);
+                if (tripCount > 0)
+                    MetricsService.TripUpdatesCounter.Add(tripCount, tags);
 
                 NpgsqlConnection dbConnection = await _dataSource.OpenConnectionAsync();
                 try
@@ -218,7 +223,7 @@ namespace komikaan.Irrigator.Services
             }
             else
             {
-                var tags = new[] { new KeyValuePair<string, object?>("feed", feed.SupplierConfigurationName) };
+                var tags = MetricsService.CreateFeedTags(feed);
                 MetricsService.FeedDownloadFailureCounter.Add(1, tags);
                 _logger.LogError("Failed to call target api: {reason} - {msg}", response.StatusCode, response.ReasonPhrase);
             }

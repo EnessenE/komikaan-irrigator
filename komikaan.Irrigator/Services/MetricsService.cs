@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using komikaan.Irrigator.Models;
 
 namespace komikaan.Irrigator.Services
 {
@@ -69,6 +70,18 @@ namespace komikaan.Irrigator.Services
             name: "gtfs_active_feeds",
             unit: "{feeds}",
             description: "Current number of active feeds being processed");
+
+        /// <summary>
+        /// Creates metric tags from a RealTimeFeed, including both name and suffix.
+        /// </summary>
+        public static KeyValuePair<string, object?>[] CreateFeedTags(RealTimeFeed feed)
+        {
+            return new[]
+            {
+                new KeyValuePair<string, object?>("feed", feed.SupplierConfigurationName),
+                new KeyValuePair<string, object?>("type", feed.Type)
+            };
+        }
 
         public static Meter GetMeter()
         {
