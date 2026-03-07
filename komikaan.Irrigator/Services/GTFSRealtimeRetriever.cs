@@ -187,7 +187,6 @@ namespace komikaan.Irrigator.Services
 
                 // Record entity metrics
                 MetricsService.EntitiesProcessedCounter.Add(feedMessage.Entities.Count, tags);
-                    MetricsService.EntitiesProcessedCounter.Add(feedMessage.Entities.Count, tags);
                 if (alertCount > 0)
                     MetricsService.AlertsCounter.Add(alertCount, tags);
                 if (vehicleCount > 0)
