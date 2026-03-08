@@ -201,9 +201,9 @@ namespace komikaan.Irrigator.Services
 
                     //LogThings(feedMessage);
 
-                    await DetectTripUpdate(feed, feedMessage, dbConnection);
-                    await DetectVehicleUpdate(feed, feedMessage, dbConnection);
-                    await DetectAlertUpdate(feed, feedMessage, dbConnection);
+                    await DetectTripUpdate(feed, feedMessage, tags, dbConnection);
+                    await DetectVehicleUpdate(feed, feedMessage, tags, dbConnection);
+                    await DetectAlertUpdate(feed, feedMessage, tags, dbConnection);
 
                     dbStopwatch.Stop();
                     MetricsService.DbWriteLatencyMs.Record(dbStopwatch.ElapsedMilliseconds, tags);
@@ -243,16 +243,70 @@ namespace komikaan.Irrigator.Services
             }
         }
 
-        private async Task DetectAlertUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
+        private async Task DetectAlertUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, KeyValuePair<string, object?>[] tags, NpgsqlConnection dbConnection)
         {
             if (feed.Entities.Any(x => x.Alert != null))
             {
+                // Track alerts by effect, cause, and severity
+                var alertEffects = feed.Entities
+                    .Where(e => e.Alert != null)
+                    .GroupBy(e => e.Alert!.Effect)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                var alertCauses = feed.Entities
+                    .Where(e => e.Alert != null)
+                    .GroupBy(e => e.Alert!.Cause)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                var alertSeverities = feed.Entities
+                    .Where(e => e.Alert != null)
+                    .GroupBy(e => e.Alert!.SeverityLevel)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                foreach (var effect in alertEffects)
+                {
+                    MetricsService.AlertEffectUpdateCounter(effect.Key, effect.Value, tags);
+                }
+                
+                foreach (var cause in alertCauses)
+                {
+                    MetricsService.AlertCauseUpdateCounter(cause.Key, cause.Value, tags);
+                }
+                
+                foreach (var severity in alertSeverities)
+                {
+                    MetricsService.AlertSeverityUpdateCounter(severity.Key, severity.Value, tags);
+                }
+                
                 await ProcessAlertUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
             }
         }
 
-        private async Task DetectTripUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
+        private async Task DetectTripUpdate(RealTimeFeed realtimeFeed, FeedMessage feed,
+            KeyValuePair<string, object?>[] tags, NpgsqlConnection dbConnection)
         {
+            var stopTimeScheduleRelationships = feed.Entities
+                .Where(e => e.TripUpdate != null)
+                .SelectMany(e => e.TripUpdate!.StopTimeUpdate)
+                .GroupBy(stu => stu.ScheduleRelationship)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var scheduleRelationShips = feed.Entities
+                .Where(e => e.TripUpdate != null)
+                .Select(e => e.TripUpdate!.Trip)
+                .GroupBy(stu => stu.ScheduleRelationship)
+                .ToDictionary(g => g.Key, g => g.Count());
+            
+            foreach (var scheduleRelations in scheduleRelationShips)
+            {
+                MetricsService.TripsScheduleRelationShipUpdateCounter(scheduleRelations.Key, scheduleRelations.Value, tags);
+            }
+            
+            foreach (var scheduleRelations in stopTimeScheduleRelationships)
+            {
+                MetricsService.TripsStopsScheduleRelationShipUpdateCounter(scheduleRelations.Key, scheduleRelations.Value, tags);
+            }
+            
             if (feed.Entities.Any(x => x.TripUpdate != null))
             {
                 await ProcessTripUpdateAsync(realtimeFeed, dbConnection, feed.Entities);
@@ -263,12 +317,41 @@ namespace komikaan.Irrigator.Services
             }
         }
 
-        private async Task DetectVehicleUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, NpgsqlConnection dbConnection)
+        private async Task DetectVehicleUpdate(RealTimeFeed realtimeFeed, FeedMessage feed, KeyValuePair<string, object?>[] tags, NpgsqlConnection dbConnection)
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
                 var vehiclePositonsToUpdate = feed.Entities.Where(Entities => Entities.Vehicle != null).Select(Entities => new Tuple<FeedEntity, VehiclePosition>(Entities, Entities.Vehicle)).ToList();
                 _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
+                
+                // Track vehicle statuses by type
+                var vehicleStatuses = vehiclePositonsToUpdate
+                    .GroupBy(v => v.Item2.CurrentStatus)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                var vehicleCongestionLevels = vehiclePositonsToUpdate
+                    .GroupBy(v => v.Item2.CongestionLevel)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                var vehicleOccupancies = vehiclePositonsToUpdate
+                    .GroupBy(v => v.Item2.OccupancyStatus)
+                    .ToDictionary(g => g.Key, g => g.Count());
+                
+                foreach (var status in vehicleStatuses)
+                {
+                    MetricsService.VehicleCurrentStatusUpdateCounter(status.Key, status.Value, tags);
+                }
+                
+                foreach (var congestion in vehicleCongestionLevels)
+                {
+                    MetricsService.VehicleCongestionLevelUpdateCounter(congestion.Key, congestion.Value, tags);
+                }
+                
+                foreach (var occupancy in vehicleOccupancies)
+                {
+                    MetricsService.VehicleOccupancyStatusUpdateCounter(occupancy.Key, occupancy.Value, tags);
+                }
+                
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
                     await ProcessVehiclePositionAsync(realtimeFeed, dbConnection, batch);
