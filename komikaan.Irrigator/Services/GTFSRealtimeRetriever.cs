@@ -260,7 +260,7 @@ namespace komikaan.Irrigator.Services
                 
                 var alertSeverities = feed.Entities
                     .Where(e => e.Alert != null)
-                    .GroupBy(e => e.Alert!.SeverityLevel)
+                    .GroupBy(e => (e.Alert?.SeverityLevel ?? SeverityLevel.UnknownSeverity))
                     .ToDictionary(g => g.Key, g => g.Count());
                 
                 foreach (var effect in alertEffects)
@@ -329,12 +329,12 @@ namespace komikaan.Irrigator.Services
                 
                 var vehicleCongestionLevels = feed.Entities
                     .Where(e => e.Vehicle != null)
-                    .GroupBy(e => e.Vehicle!.CongestionLevel)
+                    .GroupBy(e => e.Vehicle!.CongestionLevel ?? CongestionLevel.UnknownCongestionLevel)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
                 var vehicleOccupancies = feed.Entities
                     .Where(e => e.Vehicle != null)
-                    .GroupBy(e => e.Vehicle!.OccupancyStatus)
+                    .GroupBy(e => e.Vehicle!.OccupancyStatus ?? OccupancyStatus.NoDataAvailable)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
                 foreach (var status in vehicleStatuses)
