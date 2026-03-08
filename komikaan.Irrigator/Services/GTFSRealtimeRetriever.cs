@@ -294,7 +294,7 @@ namespace komikaan.Irrigator.Services
             var scheduleRelationShips = feed.Entities
                 .Where(e => e.TripUpdate != null && e.TripUpdate!.Trip != null)
                 .Select(e => e.TripUpdate!.Trip)
-                .GroupBy(stu => stu.ScheduleRelationship?.ToString())
+                .GroupBy(stu => stu.ScheduleRelationship?.ToString() ?? "none")
                 .ToDictionary(g => g.Key, g => g.Count());
             
             foreach (var scheduleRelations in scheduleRelationShips)
