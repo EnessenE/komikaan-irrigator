@@ -114,10 +114,10 @@ namespace komikaan.Irrigator.Services
             unit: "{statuses}",
             description: "Total number of vehicle occupancy statuses processed");
 
-        public static void TripsScheduleRelationShipUpdateCounter(TripScheduleRelationship? key, int value, KeyValuePair<string, object?>[] tags)
+        public static void TripsScheduleRelationShipUpdateCounter(string key, int value, KeyValuePair<string, object?>[] tags)
         {
             var expandedTags = tags.ToList();
-            expandedTags.Add(new KeyValuePair<string, object?>("schedulerelationship", key?.ToString() ?? "none"));
+            expandedTags.Add(new KeyValuePair<string, object?>("schedulerelationship", key ?? "none"));
             TripScheduleRelationships.Add(value, expandedTags.ToArray());
         }
 
