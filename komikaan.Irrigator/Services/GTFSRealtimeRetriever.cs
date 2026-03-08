@@ -321,20 +321,20 @@ namespace komikaan.Irrigator.Services
         {
             if (feed.Entities.Any(x => x.Vehicle != null))
             {
-                var vehiclePositonsToUpdate = feed.Entities.Where(Entities => Entities.Vehicle != null).Select(Entities => new Tuple<FeedEntity, VehiclePosition>(Entities, Entities.Vehicle)).ToList();
-                _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
-                
                 // Track vehicle statuses by type
-                var vehicleStatuses = vehiclePositonsToUpdate
-                    .GroupBy(v => v.Item2.CurrentStatus)
+                var vehicleStatuses = feed.Entities
+                    .Where(e => e.Vehicle != null)
+                    .GroupBy(e => e.Vehicle!.CurrentStatus)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
-                var vehicleCongestionLevels = vehiclePositonsToUpdate
-                    .GroupBy(v => v.Item2.CongestionLevel)
+                var vehicleCongestionLevels = feed.Entities
+                    .Where(e => e.Vehicle != null)
+                    .GroupBy(e => e.Vehicle!.CongestionLevel)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
-                var vehicleOccupancies = vehiclePositonsToUpdate
-                    .GroupBy(v => v.Item2.OccupancyStatus)
+                var vehicleOccupancies = feed.Entities
+                    .Where(e => e.Vehicle != null)
+                    .GroupBy(e => e.Vehicle!.OccupancyStatus)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
                 foreach (var status in vehicleStatuses)
@@ -352,6 +352,8 @@ namespace komikaan.Irrigator.Services
                     MetricsService.VehicleOccupancyStatusUpdateCounter(occupancy.Key, occupancy.Value, tags);
                 }
                 
+                var vehiclePositonsToUpdate = feed.Entities.Where(Entities => Entities.Vehicle != null).Select(Entities => new Tuple<FeedEntity, VehiclePosition>(Entities, Entities.Vehicle)).ToList();
+                _logger.LogInformation("Total of {x} updates", vehiclePositonsToUpdate.Count());
                 foreach (var batch in vehiclePositonsToUpdate.ChunkBy(500))
                 {
                     await ProcessVehiclePositionAsync(realtimeFeed, dbConnection, batch);
