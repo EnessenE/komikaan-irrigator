@@ -124,7 +124,7 @@ namespace komikaan.Irrigator.Services
 
         private async Task SupplierLoop(RealTimeFeed feed, CancellationToken stoppingToken)
         {
-            using (_logger.BeginScope(feed.SupplierConfigurationName))
+            using (_logger.BeginScope(new { Supplier = feed.SupplierConfigurationName, Type = feed.Type }))
             {
                 if (feed.PollingRate == TimeSpan.Zero)
                 {
@@ -178,11 +178,12 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Added header {name} to the request", feed.Header);
             }
 
-            // If we have a cached ETag for this supplier, send it so the server can return 304 Not Modified
-            if (_etagCache.TryGetValue(feed.SupplierConfigurationName, out var cachedEtag) && !string.IsNullOrWhiteSpace(cachedEtag))
+            // If we have a cached ETag for this supplier+type, send it so the server can return 304 Not Modified
+            var etagKey = $"{feed.SupplierConfigurationName}|{feed.Type}";
+            if (_etagCache.TryGetValue(etagKey, out var cachedEtag) && !string.IsNullOrWhiteSpace(cachedEtag))
             {
                 request.Headers.TryAddWithoutValidation("If-None-Match", cachedEtag);
-                _logger.LogDebug("Added If-None-Match header for {supplier}", feed.SupplierConfigurationName);
+                _logger.LogDebug("Added If-None-Match header for {supplier} (type {type})", feed.SupplierConfigurationName, feed.Type);
             }
 
             var downloadStopwatch = Stopwatch.StartNew();
@@ -205,8 +206,8 @@ namespace komikaan.Irrigator.Services
                     var respEtag = response.Headers?.ETag?.Tag;
                     if (!string.IsNullOrWhiteSpace(respEtag))
                     {
-                        _etagCache.AddOrUpdate(feed.SupplierConfigurationName, respEtag, (k, v) => respEtag);
-                        _logger.LogDebug("Cached ETag for {supplier}: {etag}", feed.SupplierConfigurationName, respEtag);
+                        _etagCache.AddOrUpdate(etagKey, respEtag, (k, v) => respEtag);
+                        _logger.LogDebug("Cached ETag for {supplier} (type {type}): {etag}", feed.SupplierConfigurationName, feed.Type, respEtag);
                     }
                 }
                 catch (Exception ex)
@@ -221,8 +222,26 @@ namespace komikaan.Irrigator.Services
                 
                 // Start processing timer
                 var processingStopwatch = Stopwatch.StartNew();
-                FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(response.Content.ReadAsStream());
-                _logger.LogInformation("Parsed pb.");
+                try
+                {
+                    var content = await response.Content.ReadAsByteArrayAsync();
+                    if (LooksLikeNonProtobuf(content, out var sample))
+                    {
+                        _logger.LogError("Downloaded content did not appear to be protobuf; skipping parse. Content sample: {sample}", sample);
+                        MetricsService.FeedDownloadFailureCounter.Add(1, tags);
+                        return;
+                    }
+
+                    using var ms = new System.IO.MemoryStream(content);
+                    FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(ms);
+                    _logger.LogInformation("Parsed pb.");
+                }
+                catch (ProtoException protoException)
+                {
+                    _logger.LogError(protoException, "Failed to parse file, a corrupted file may have been processed");
+                    MetricsService.FeedDownloadFailureCounter.Add(1, tags);
+                    return;
+                }
 
                 var missedIds = feedMessage.Entities.Count(x => x.Id == null);
                 if (missedIds > 0)
@@ -682,6 +701,22 @@ namespace komikaan.Irrigator.Services
         private Guid GetActivePeriod(List<TimeRange> activePeriods)
         {
             return Guid.Empty;
+        }
+
+        private static bool LooksLikeNonProtobuf(byte[] content, out string sample)
+        {
+            sample = string.Empty;
+            if (content == null || content.Length == 0)
+                return false;
+
+            var length = (int)System.Math.Min(content.Length, 512);
+            sample = System.Text.Encoding.UTF8.GetString(content, 0, length);
+            var trimmed = sample.TrimStart();
+            if (trimmed.StartsWith("{") || trimmed.StartsWith("[") || trimmed.StartsWith("<") || sample.IndexOf("html", System.StringComparison.OrdinalIgnoreCase) >= 0 || sample.IndexOf("json", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+            return false;
         }
 
         public Task StopAsync(CancellationToken cancellationToken)

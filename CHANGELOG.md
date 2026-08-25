@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.6.1]
+### Changed
+- Include 'Type' in dictionary key
+
 [0.6.0]
 ### Added
 - ETag caching and conditional GET (If-None-Match) for feed downloads.
