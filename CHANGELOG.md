@@ -2,6 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.6.2]
 [0.6.1]
 ### Changed
 - Include 'Type' in dictionary key

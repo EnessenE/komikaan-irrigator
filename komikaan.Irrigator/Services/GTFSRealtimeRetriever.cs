@@ -222,6 +222,7 @@ namespace komikaan.Irrigator.Services
                 
                 // Start processing timer
                 var processingStopwatch = Stopwatch.StartNew();
+                FeedMessage? feedMessage = null;
                 try
                 {
                     var content = await response.Content.ReadAsByteArrayAsync();
@@ -233,7 +234,7 @@ namespace komikaan.Irrigator.Services
                     }
 
                     using var ms = new System.IO.MemoryStream(content);
-                    FeedMessage feedMessage = Serializer.Deserialize<FeedMessage>(ms);
+                    feedMessage = Serializer.Deserialize<FeedMessage>(ms);
                     _logger.LogInformation("Parsed pb.");
                 }
                 catch (ProtoException protoException)
@@ -242,6 +243,13 @@ namespace komikaan.Irrigator.Services
                     MetricsService.FeedDownloadFailureCounter.Add(1, tags);
                     return;
                 }
+
+                if (feedMessage == null)
+                {
+                    MetricsService.FeedDownloadFailureCounter.Add(1, tags);
+                    return;
+                }
+                var _feedMessage = feedMessage!;
 
                 var missedIds = feedMessage.Entities.Count(x => x.Id == null);
                 if (missedIds > 0)
