@@ -17,6 +17,7 @@ namespace komikaan.Irrigator.Services
         private readonly ILogger<GTFSRealtimeRetriever> _logger;
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _config;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _etagCache = new System.Collections.Concurrent.ConcurrentDictionary<string, string>();
         private readonly NpgsqlDataSourceBuilder _dataSourceBuilder;
         private readonly NpgsqlDataSource _dataSource;
 
@@ -37,43 +38,23 @@ namespace komikaan.Irrigator.Services
             _dataSource = _dataSourceBuilder.Build();
 
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "irrigator/reasulus.nl");
+            // Request compressed responses when available
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate, br");
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try
             {
-                var interval = _config.GetValue<TimeSpan>("WorkInterval", TimeSpan.FromSeconds(30));
-                while (!stoppingToken.IsCancellationRequested)
-                {
-                    var realtimeFeeds = await GetFeedsAsync();
-                    _logger.LogInformation("Starting a process cycle for {amount} feeds", realtimeFeeds.Count);
-                    MetricsService.ActiveFeedsCounter.Add(realtimeFeeds.Count);
+                // Start a dedicated loop per supplier so each can poll at its own `PollingRate` concurrently.
+                var realtimeFeeds = await GetFeedsAsync();
+                _logger.LogInformation("Starting concurrent processing for {amount} feeds", realtimeFeeds.Count);
+                MetricsService.ActiveFeedsCounter.Add(realtimeFeeds.Count);
 
-                    foreach (var feed in realtimeFeeds)
-                    {
-                        if (stoppingToken.IsCancellationRequested)
-                        {
-                            break;
-                        }
-                        using (_logger.BeginScope(feed.SupplierConfigurationName))
-                        {
-                            if (feed.Enabled)
-                            {
-                                _logger.LogInformation("Started an import");
-                                await RunFeedImport(feed, stoppingToken);
-                            }
-                            else
-                            {
-                                _logger.LogInformation("Skipped as its disabled");
-                            }
+                var supplierTasks = realtimeFeeds.Select(feed => Task.Run(() => SupplierLoop(feed, stoppingToken), stoppingToken)).ToArray();
 
-                        }
-                    }
-                    MetricsService.ActiveFeedsCounter.Add(-realtimeFeeds.Count);
-                    _logger.LogInformation("Finished, waiting for the interval of {time}", interval);
-                    await Task.Delay(interval, stoppingToken);
-                }
+                // Wait until cancellation; individual supplier loops honour the token.
+                await Task.WhenAll(supplierTasks);
             }
             catch (Exception ex)
             {
@@ -141,6 +122,48 @@ namespace komikaan.Irrigator.Services
             }
         }
 
+        private async Task SupplierLoop(RealTimeFeed feed, CancellationToken stoppingToken)
+        {
+            using (_logger.BeginScope(feed.SupplierConfigurationName))
+            {
+                if (feed.PollingRate == TimeSpan.Zero)
+                {
+                    feed.PollingRate = TimeSpan.FromMinutes(10);
+                    _logger.LogWarning("Polling rate isn't set for {supplier}, defaulting to {interval}", feed.SupplierConfigurationName, feed.PollingRate);
+                }
+                _logger.LogInformation("Started supplier loop (interval {interval})", feed.PollingRate);
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    try
+                    {
+                        if (feed.Enabled)
+                        {
+                            await RunFeedImport(feed, stoppingToken);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("Skipped as it's disabled");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Unhandled exception in supplier loop");
+                    }
+
+                    try
+                    {
+                        await Task.Delay(feed.PollingRate, stoppingToken);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // ignore and allow loop to exit
+                        break;
+                    }
+                }
+                _logger.LogInformation("Supplier loop ending");
+            }
+        }
+
         private async Task FeedImport(RealTimeFeed feed)
         {
             //TODO: Figure out scaling how to factor in supplierconfigurations for many feeds
@@ -155,12 +178,41 @@ namespace komikaan.Irrigator.Services
                 _logger.LogInformation("Added header {name} to the request", feed.Header);
             }
 
+            // If we have a cached ETag for this supplier, send it so the server can return 304 Not Modified
+            if (_etagCache.TryGetValue(feed.SupplierConfigurationName, out var cachedEtag) && !string.IsNullOrWhiteSpace(cachedEtag))
+            {
+                request.Headers.TryAddWithoutValidation("If-None-Match", cachedEtag);
+                _logger.LogDebug("Added If-None-Match header for {supplier}", feed.SupplierConfigurationName);
+            }
+
             var downloadStopwatch = Stopwatch.StartNew();
             var response = await _httpClient.SendAsync(request);
             downloadStopwatch.Stop();
 
+            if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+            {
+                var tags = MetricsService.CreateFeedTags(feed);
+                MetricsService.FeedDownloadCounter.Add(0, tags);
+                _logger.LogInformation("Feed not modified since last fetch (304)");
+                return;
+            }
+
             if (response.IsSuccessStatusCode)
             {
+                // Cache ETag for future If-None-Match requests
+                try
+                {
+                    var respEtag = response.Headers?.ETag?.Tag;
+                    if (!string.IsNullOrWhiteSpace(respEtag))
+                    {
+                        _etagCache.AddOrUpdate(feed.SupplierConfigurationName, respEtag, (k, v) => respEtag);
+                        _logger.LogDebug("Cached ETag for {supplier}: {etag}", feed.SupplierConfigurationName, respEtag);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to cache ETag");
+                }
                 var tags = MetricsService.CreateFeedTags(feed);
                 MetricsService.FeedDownloadCounter.Add(1, tags);
                 MetricsService.FeedDownloadDurationMs.Record(downloadStopwatch.ElapsedMilliseconds, tags);

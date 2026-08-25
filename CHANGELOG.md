@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.6.0]
+### Added
+- ETag caching and conditional GET (If-None-Match) for feed downloads.
+### Changed
+- Request compressed responses via `Accept-Encoding` (gzip, deflate, br).
+- Process suppliers concurrently with individual `PollingRate` settings.
+- Default `PollingRate` to 10 minutes when not set and log a warning.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
