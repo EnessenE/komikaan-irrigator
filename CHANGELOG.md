@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.7.0] - 14-11-2026
+### Changed
+- Bump all NuGet dependencies to their latest versions
+- Remove unused DapperExtensions and NetTopologySuite.Core dependencies (drops the vulnerable transitive Oracle.ManagedDataAccess.Core flagged by NU1903)
+
 [0.6.2]
 [0.6.1]
 ### Changed
