@@ -38,8 +38,8 @@ namespace komikaan.Irrigator.Services
             _dataSource = _dataSourceBuilder.Build();
 
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "irrigator/reasulus.nl");
-            // Request compressed responses when available
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate, br");
+            // Accept-Encoding is managed by the handler via AutomaticDecompression (see Program.cs);
+            // adding it manually would make the server compress responses without the client decompressing them.
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -716,6 +716,18 @@ namespace komikaan.Irrigator.Services
             sample = string.Empty;
             if (content == null || content.Length == 0)
                 return false;
+
+            // Compressed payload (response wasn't decompressed): gzip 1F 8B, zstd 28 B5 2F FD,
+            // zlib/deflate 78 xx where (CMF*256+FLG) % 31 == 0
+            var isGzip = content.Length >= 2 && content[0] == 0x1F && content[1] == 0x8B;
+            var isZstd = content.Length >= 4 && content[0] == 0x28 && content[1] == 0xB5 && content[2] == 0x2F && content[3] == 0xFD;
+            var isZlib = content.Length >= 2 && content[0] == 0x78 && (((content[0] << 8) | content[1]) % 31) == 0;
+            if (isGzip || isZstd || isZlib)
+            {
+                var hexLength = (int)System.Math.Min(content.Length, 16);
+                sample = "0x" + System.Convert.ToHexString(content, 0, hexLength) + " (compressed payload, not protobuf)";
+                return true;
+            }
 
             var length = (int)System.Math.Min(content.Length, 512);
             sample = System.Text.Encoding.UTF8.GetString(content, 0, length);

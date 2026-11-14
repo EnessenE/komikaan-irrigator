@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+[Unreleased]
+### Fixed
+- GTFS-RT feeds failing to parse with ProtoBuf errors (`Invalid field in source data: 0`, `Invalid wire-type`) because a manually added `Accept-Encoding: gzip, deflate, br` header made servers return compressed bytes that the HttpClient never decompressed. The default client now uses a `SocketsHttpHandler` with `AutomaticDecompression = All`, and the non-protobuf sanity check detects gzip/zlib/zstd payloads by magic bytes.
+
 [0.7.0] - 14-11-2026
 ### Changed
 - Bump all NuGet dependencies to their latest versions

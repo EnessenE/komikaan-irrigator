@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reflection;
 using komikaan.Irrigator.Services;
 using OpenTelemetry.Metrics;
@@ -29,7 +30,14 @@ namespace komikaan.Irrigator
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
-            builder.Services.AddHttpClient();
+            // Configure the default (unnamed) client: feeds may be served gzip/deflate/br-compressed,
+            // so decompress transparently to hand protobuf parsing the raw feed bytes. The handler
+            // adds the Accept-Encoding header itself when this is set.
+            builder.Services.AddHttpClient(string.Empty)
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    AutomaticDecompression = DecompressionMethods.All
+                });
 
             // Configure OpenTelemetry metrics
             builder.Services.AddOpenTelemetry()
