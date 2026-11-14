@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.7.2] - 14-11-2026
+### Fixed
+- geops.ch alerts feed failing to parse with `Invalid wire-type (String)`: opentransportdata.swiss sends `TripDescriptor.modified_trip` (field 7) as a plain trip-id string instead of a `ModifiedTripSelector` message, which protobuf-net cannot parse. Bumped komikaan.GTFS to 4.4.2, which captures field 7 as raw bytes (`ModifiedTripRaw` / `ModifiedTripId`).
+
 [0.7.1] - 14-11-2026
 ### Fixed
 - GTFS-RT feeds failing to parse with ProtoBuf errors (`Invalid field in source data: 0`, `Invalid wire-type`) because a manually added `Accept-Encoding: gzip, deflate, br` header made servers return compressed bytes that the HttpClient never decompressed. The default client now uses a `SocketsHttpHandler` with `AutomaticDecompression = All`, and the non-protobuf sanity check detects gzip/zlib/zstd payloads by magic bytes.
