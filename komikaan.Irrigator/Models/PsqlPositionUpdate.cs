@@ -1,4 +1,4 @@
-﻿namespace komikaan.Irrigator.Models
+namespace komikaan.Irrigator.Models
 {
     internal class PsqlPositionUpdate
     {
@@ -15,5 +15,8 @@
         public string occupancy_status { get; set; }
         public string congestion_level { get; set; }
         public int? occupancy_percentage { get; set; }
+        public string? vehicle_id { get; set; }
+        public string? vehicle_label { get; set; }
+        public string? vehicle_license_plate { get; set; }
     }
 }

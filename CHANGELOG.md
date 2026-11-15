@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+[0.8.0] - 15-11-2026
+### Changed
+- Map the GTFS-RT `VehicleDescriptor` (vehicle id, label, license plate) from vehicle positions into the database, so the API can expose which vehicle is driving a trip
+- Bump komikaan.GTFS to 4.5.0
+
 [0.7.2] - 14-11-2026
 ### Fixed
 - geops.ch alerts feed failing to parse with `Invalid wire-type (String)`: opentransportdata.swiss sends `TripDescriptor.modified_trip` (field 7) as a plain trip-id string instead of a `ModifiedTripSelector` message, which protobuf-net cannot parse. Bumped komikaan.GTFS to 4.4.2, which captures field 7 as raw bytes (`ModifiedTripRaw` / `ModifiedTripId`).

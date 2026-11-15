@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Npgsql;
 using ProtoBuf;
 using System.Data;
@@ -650,6 +650,9 @@ namespace komikaan.Irrigator.Services
                     measurement_time = vehiclePosition.Item2.Timestamp.ToDateTime(),
                     congestion_level = vehiclePosition.Item2.CongestionLevel?.ToString() ?? CongestionLevel.UnknownCongestionLevel.ToString(),
                     occupancy_status = vehiclePosition.Item2.OccupancyStatus?.ToString() ?? OccupancyStatus.NoDataAvailable.ToString(),
+                    vehicle_id = vehiclePosition.Item2.Vehicle?.Id,
+                    vehicle_label = vehiclePosition.Item2.Vehicle?.Label,
+                    vehicle_license_plate = vehiclePosition.Item2.Vehicle?.LicensePlate,
                 };
             }).ToArray();
             items.AddRange(positionArray);
